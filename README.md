@@ -129,6 +129,12 @@ gpg --verify SHA256SUMS.asc SHA256SUMS
 sha256sum -c SHA256SUMS
 ```
 
+On Windows, in PowerShell, compare these hashes with the lines of `SHA256SUMS` (Gpg4win verifies the signature):
+
+```powershell
+Get-FileHash -Algorithm SHA256 neb-0.1.0-windows-x86_64.zip, mnist-q8.bin
+```
+
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ## License

@@ -12,6 +12,8 @@ flags=""
 for pair in "$HOME=/home" "${RUSTUP_HOME:-$HOME/.rustup}=/rustup" "${CARGO_HOME:-$HOME/.cargo}=/cargo" "$root=/src"; do
   flags="$flags --remap-path-prefix=$(native "${pair%=*}")=${pair##*=}"
 done
+# RUSTFLAGS replaces node/.cargo/config.toml, so the static C runtime of Windows is repeated here
+case "$(rustc -vV | sed -n 's/^host: //p')" in *windows-msvc) flags="$flags -C target-feature=+crt-static" ;; esac
 cd "$root/node"
 RUSTFLAGS="$flags" cargo build --release --locked
 if [ "${NEB_CUDA:-0}" = 1 ]; then

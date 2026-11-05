@@ -242,6 +242,9 @@ fn run(args: &[String]) -> i32 {
         let info = Info { title: "GPU proof-of-work miner".into(), device: names.join(", "), node: node.clone() };
         let outcome =
             dashboard::run(&miner.session(), &info, &|| Hardware::Gpu(readings.lock().expect("readings").clone()));
+        if outcome == Outcome::Disconnected {
+            eprintln!("{}", miner.stats().disconnect_message());
+        }
         miner.stop();
         return if outcome == Outcome::Quit { 0 } else { 1 };
     }
@@ -273,7 +276,11 @@ fn run(args: &[String]) -> i32 {
         }
         (last, last_attempts) = (now, attempts);
     }
-    eprintln!("the node closed the connection or a device failed");
+    if miner.stats().jobs.load(Ordering::Relaxed) == 0 {
+        eprintln!("{}", miner.stats().disconnect_message());
+    } else {
+        eprintln!("the node closed the connection or a device failed");
+    }
     miner.stop();
     1
 }

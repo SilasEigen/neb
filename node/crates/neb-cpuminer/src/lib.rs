@@ -69,6 +69,18 @@ pub struct Stats {
     pub jobs: AtomicU64,
 }
 
+impl Stats {
+    /// What a miner prints when the node ends the connection. A node without `--miner-lock` closes it before the
+    /// first job, so a miner that never received one was refused.
+    pub fn disconnect_message(&self) -> &'static str {
+        if self.jobs.load(Ordering::Relaxed) == 0 {
+            "the node refused the miner: start neb-node with --miner-lock (the lock printed by `neb-wallet lock`)"
+        } else {
+            "the node closed the connection"
+        }
+    }
+}
+
 /// A job with the model it is mined on and its reference header. `generation`
 /// numbers the installed jobs; a worker compares it with `Shared::generation`
 /// to detect a newer job.

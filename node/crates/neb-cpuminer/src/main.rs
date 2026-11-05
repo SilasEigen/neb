@@ -124,6 +124,9 @@ fn run(args: &[String]) -> i32 {
             node: node.clone(),
         };
         let outcome = dashboard::run(&miner.session(), &info, &|| Hardware::Cpu { threads });
+        if outcome == Outcome::Disconnected {
+            eprintln!("{}", miner.stats().disconnect_message());
+        }
         miner.stop();
         return if outcome == Outcome::Quit { 0 } else { 1 };
     }
@@ -155,7 +158,7 @@ fn run(args: &[String]) -> i32 {
         }
         (last, last_attempts) = (now, attempts);
     }
-    eprintln!("the node closed the connection");
+    eprintln!("{}", miner.stats().disconnect_message());
     miner.stop();
     1
 }

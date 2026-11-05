@@ -15,8 +15,8 @@ neb-json = { path = "../neb-json" }
 ed25519-dalek = "3"
 blake3 = "1"
 rand_core = { version = "0.6", features = ["getrandom"] }
-argon2 = "0.5"
-chacha20poly1305 = "0.10"
+argon2 = "0.6"
+chacha20poly1305 = "0.11"
 rpassword = "7"
 
 [dev-dependencies]

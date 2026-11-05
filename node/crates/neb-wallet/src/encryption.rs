@@ -85,7 +85,7 @@ pub fn encrypt(plain: &str, password: &str) -> String {
     let cipher = XChaCha20Poly1305::new(&derive_key(password, &salt).into());
     let aad = associated_data(&salt, &nonce);
     let data = cipher
-        .encrypt(XNonce::from_slice(&nonce), Payload { msg: plain.as_bytes(), aad: &aad })
+        .encrypt(&XNonce::from(nonce), Payload { msg: plain.as_bytes(), aad: &aad })
         .expect("XChaCha20-Poly1305 seals any message of this size");
     format!(
         "# neb wallet, encrypted with a password\n{MAGIC}\nsalt {}\nnonce {}\ndata {}\n",
@@ -114,7 +114,10 @@ pub fn decrypt(text: &str, password: &str) -> Result<String, EncryptionError> {
     let cipher = XChaCha20Poly1305::new(&derive_key(password, &salt).into());
     let aad = associated_data(&salt, &nonce);
     let plain = cipher
-        .decrypt(XNonce::from_slice(&nonce), Payload { msg: &data, aad: &aad })
+        .decrypt(
+            &XNonce::try_from(nonce.as_slice()).expect("24 bytes, checked above"),
+            Payload { msg: &data, aad: &aad },
+        )
         .map_err(|_| EncryptionError::Password)?;
     String::from_utf8(plain).map_err(|_| EncryptionError::Password)
 }

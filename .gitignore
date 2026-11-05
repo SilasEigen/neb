@@ -1,0 +1,8 @@
+node/target/
+build/
+__pycache__/
+*.o
+*.obj
+*.exe
+*.exp
+*.lib

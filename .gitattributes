@@ -1,0 +1,5 @@
+# the vector files are pinned by SHA-256 (spec/shares.md section 10.2, spec/node.md section 10): LF endings on every platform
+vectors/*.txt text eol=lf
+node/vectors/*.txt text eol=lf
+*.bat text eol=crlf
+*.sh text eol=lf

@@ -1,0 +1,19 @@
+[package]
+name = "neb-work"
+description = "Work service of the NEB node: frames, mempool, block templates and submissions (spec/node.md section 7)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+neb-block = { path = "../neb-block" }
+neb-codec = { path = "../neb-codec" }
+neb-chain = { path = "../neb-chain" }
+neb-pow = { path = "../neb-pow" }
+blake3 = "1"
+
+[dev-dependencies]
+ed25519-dalek = "3"
+
+[lints]
+workspace = true

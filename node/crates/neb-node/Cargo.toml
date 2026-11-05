@@ -1,0 +1,20 @@
+[package]
+name = "neb-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+neb-block = { path = "../neb-block" }
+neb-difficulty = { path = "../neb-difficulty" }
+neb-pow = { path = "../neb-pow" }
+neb-chain = { path = "../neb-chain" }
+neb-work = { path = "../neb-work" }
+neb-store = { path = "../neb-store" }
+neb-codec = { path = "../neb-codec" }
+neb-json = { path = "../neb-json" }
+blake3 = "1"
+ed25519-dalek = "3"
+
+[lints]
+workspace = true

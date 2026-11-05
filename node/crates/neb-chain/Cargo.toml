@@ -1,0 +1,17 @@
+[package]
+name = "neb-chain"
+description = "Chain state of the NEB node: blocks, transactions, the UTXO set and reorganisations (spec/node.md sections 4 to 6)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+neb-block = { path = "../neb-block" }
+neb-codec = { path = "../neb-codec" }
+neb-difficulty = { path = "../neb-difficulty" }
+neb-pow = { path = "../neb-pow" }
+blake3 = "1"
+ed25519-dalek = "3"
+
+[lints]
+workspace = true

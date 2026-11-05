@@ -1,0 +1,11 @@
+[package]
+name = "neb-json"
+description = "Small JSON reader and writer for the NEB node's RPC and wallet."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

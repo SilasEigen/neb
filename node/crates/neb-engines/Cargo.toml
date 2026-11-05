@@ -1,0 +1,24 @@
+[package]
+name = "neb-engines"
+description = "Optimised ticket engines of the NEB miners (AVX-512), checked against the C reference. Mining only: the node does not use this crate."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Lets the tests make an engine return wrong tickets, to check that the reference catches them. Never enabled in a build.
+fault-injection = []
+
+[dependencies]
+neb-block = { path = "../neb-block" }
+neb-pow = { path = "../neb-pow" }
+blake3 = "1"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+neb-engines = { path = ".", features = ["fault-injection"] }
+
+[lints]
+workspace = true

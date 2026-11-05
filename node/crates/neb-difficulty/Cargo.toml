@@ -1,0 +1,11 @@
+[package]
+name = "neb-difficulty"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+neb-block = { path = "../neb-block" }
+
+[lints]
+workspace = true

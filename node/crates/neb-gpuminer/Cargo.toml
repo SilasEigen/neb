@@ -1,0 +1,36 @@
+[package]
+name = "neb-gpuminer"
+description = "GPU miner of the NEB work service: share attempts on CUDA devices, checked on the CPU before they are sent."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+# Builds pow/gpu with nvcc (CUDA toolkit and, on Windows, the MSVC build tools) and the neb-miner-gpu binary.
+cuda = []
+
+[[bin]]
+name = "neb-miner-gpu"
+path = "src/main.rs"
+required-features = ["cuda"]
+
+[[example]]
+name = "bench_gpu"
+required-features = ["cuda"]
+
+[dependencies]
+neb-block = { path = "../neb-block" }
+neb-cpuminer = { path = "../neb-cpuminer" }
+neb-engines = { path = "../neb-engines" }
+neb-pow = { path = "../neb-pow" }
+blake3 = "1"
+
+[build-dependencies]
+cc = "1"
+
+[dev-dependencies]
+neb-chain = { path = "../neb-chain" }
+neb-node = { path = "../neb-node" }
+
+[lints]
+workspace = true

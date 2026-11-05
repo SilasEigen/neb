@@ -1,0 +1,24 @@
+[package]
+name = "neb-cpuminer"
+description = "CPU miner of the NEB work service: share attempts on the model of the chain (spec/shares.md section 11)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "neb-miner-cpu"
+path = "src/main.rs"
+
+[dependencies]
+neb-block = { path = "../neb-block" }
+neb-engines = { path = "../neb-engines" }
+neb-pow = { path = "../neb-pow" }
+neb-work = { path = "../neb-work" }
+blake3 = "1"
+
+[dev-dependencies]
+neb-chain = { path = "../neb-chain" }
+neb-node = { path = "../neb-node" }
+
+[lints]
+workspace = true

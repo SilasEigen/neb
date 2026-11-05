@@ -1,0 +1,12 @@
+date 2026-11-02T09:59:13Z
+uname MINGW64_NT-10.0-26200 3.6.7-fb42d713.x86_64 x86_64
+model name	: AMD Zen 5 desktop processor (16 cores)
+logical_processors 32
+rustc 1.96.0 (ac68faa20 2026-05-25)
+gcc.exe (x86_64-posix-seh-rev1, Built by MinGW-Builds project) 16.2.0
+dataset mnist-q8.bin
+model model_step0.bin b031c46d945c82f76c2930f5bed81b5fc4e6994c004fb184673a7a02962552ce
+model model_step300.bin 288bd427ab5ca1a4164b6282af5ecc6df540ac6cd24ca14408e1a4337f00d40a
+model model_step3000.bin 99f24ba66f7a45884427c3fc1ceeaca9afa8f0d0699b1aed92e507bcfe0b5540
+model model_step100000.bin b93680bb5dfbfafc6d37e7ff02370a62dbf3ffe5fe4f8d9104ab105cdad1ab02
+dataset_sha256 3a28eb46dec0c43003b22c629c7a2007a61ffb9fbb7815f9af02cd3f5aa34c8b

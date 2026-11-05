@@ -1,0 +1,49 @@
+# syntax=docker/dockerfile:1.7
+#
+# Container image of the GPU miner (NVIDIA, compute capability 7.5 or later).
+#
+#   docker build -f Dockerfile.cuda -t neb-miner-gpu .
+#   docker run --rm --gpus all neb-miner-gpu --selftest
+#
+# The CUDA runtime is linked into the binary, so the image needs only the NVIDIA driver of the host, which the NVIDIA
+# Container Toolkit makes available to the container. Usage: docs/docker.md.
+
+ARG CUDA_IMAGE=nvidia/cuda:13.3.0-devel-ubuntu22.04@sha256:e7cb11515d3931675b57eb26c5e70055e702a4d51320c60ebcd899380ee3c7d5
+ARG RUNTIME_IMAGE=ubuntu:22.04@sha256:076e7bf82319619f28dd0aa9c02ab34b055ad37100395b4f49a2ffba04fb5e11
+ARG RUST_TOOLCHAIN=1.96.0
+
+FROM ${CUDA_IMAGE} AS build
+ARG RUST_TOOLCHAIN
+ENV CARGO_HOME=/usr/local/cargo RUSTUP_HOME=/usr/local/rustup PATH=/usr/local/cargo/bin:${PATH} CUDA_PATH=/usr/local/cuda
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends build-essential ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+  | sh -s -- -y --profile minimal --default-toolchain ${RUST_TOOLCHAIN}
+WORKDIR /src
+COPY tools/release-build.sh tools/release-build.sh
+COPY vectors vectors
+COPY pow pow
+COPY node node
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/node/target \
+    NEB_CUDA=1 bash tools/release-build.sh \
+ && install -d /out \
+ && cp node/target/release/neb-miner-gpu /out/
+
+FROM ${RUNTIME_IMAGE} AS miner-gpu
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/* \
+ && groupadd --system --gid 10001 neb \
+ && useradd --system --uid 10001 --gid neb --home-dir /data --shell /usr/sbin/nologin neb \
+ && install -d -o neb -g neb /data
+LABEL org.opencontainers.image.title="neb-miner-gpu" \
+      org.opencontainers.image.source="https://github.com/SilasEigen/neb" \
+      org.opencontainers.image.licenses="Apache-2.0"
+COPY --from=build /out/neb-miner-gpu /usr/local/bin/
+ENV NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility
+USER neb:neb
+WORKDIR /data
+ENTRYPOINT ["neb-miner-gpu"]
+CMD ["--node", "127.0.0.1:3441", "--dataset", "/data/mnist-q8.bin", "--plain"]

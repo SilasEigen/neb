@@ -1,0 +1,68 @@
+# A node and a miner on one host. Set the address that receives the rewards, then:
+#   NEB_MINER_ADDRESS=neb1... docker compose up -d
+#   NEB_MINER_ADDRESS=neb1... docker compose --profile gpu up -d     (adds the GPU miner)
+# The work service of the node listens on the loopback interface of its container, so the miners share the network
+# namespace of the node. Usage and variables: docs/docker.md.
+name: neb
+
+x-miner: &miner
+  restart: unless-stopped
+  init: true
+  network_mode: "service:node"
+  depends_on:
+    node:
+      condition: service_healthy
+  volumes:
+    - neb-data:/data:ro
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+
+services:
+  node:
+    build:
+      context: .
+      target: node
+    image: neb-node:local
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
+    ports:
+      - "3440:3440"
+    environment:
+      NEB_MINER_ADDRESS: ${NEB_MINER_ADDRESS:?set NEB_MINER_ADDRESS to the neb1 address that receives the rewards}
+      NEB_SEEDS: ${NEB_SEEDS:-}
+      NEB_MAX_PEERS: ${NEB_MAX_PEERS:-}
+      NEB_DATASET_URL: ${NEB_DATASET_URL:-https://github.com/SilasEigen/neb/releases/download/v0.1.0/mnist-q8.bin}
+    volumes:
+      - neb-data:/data
+    tmpfs:
+      - /tmp
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  miner:
+    <<: *miner
+    build:
+      context: .
+      target: miner-cpu
+    image: neb-miner-cpu:local
+
+  miner-gpu:
+    <<: *miner
+    profiles: ["gpu"]
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    image: neb-miner-gpu:local
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  neb-data:

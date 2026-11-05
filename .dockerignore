@@ -1,0 +1,12 @@
+.git
+.github
+**/target
+**/*.exe
+build
+docs
+spec
+pow/bench/results
+pow/tests/chains
+node/data*
+**/wallet*.txt
+**/*.key

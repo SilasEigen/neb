@@ -1,0 +1,22 @@
+[package]
+name = "neb-metalminer"
+description = "Metal (Apple GPU) miner of the NEB testnet: the share attempt of spec/shares.md on Apple silicon, checked against the C reference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "neb-miner-metal"
+path = "src/main.rs"
+
+[dependencies]
+neb-block = { path = "../neb-block" }
+neb-cpuminer = { path = "../neb-cpuminer" }
+neb-pow = { path = "../neb-pow" }
+blake3 = "1"
+
+[build-dependencies]
+cc = "1"
+
+[lints]
+workspace = true

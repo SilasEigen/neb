@@ -10,6 +10,7 @@ validates every block and share with the C reference, and CI checks that `neb-no
 | node (`neb-node`) | the C reference (`neb-pow`) | none | the reference |
 | CPU miner (`neb-miner-cpu`) | the C reference | AVX-512 VNNI, dense and sparse (`pow/cpu`, crate `neb-engines`): `--engine avx512` or `avx512-dense` | the reference |
 | GPU miner (`neb-miner-gpu`) | the dp4a kernel K0 (`pow/gpu/shares_cuda.cu`) | the tensor-core kernels K1 and K2 (`pow/gpu/shares_tc.cu`): `--gpu-kernel k1` or `k2` | K0 |
+| GPU miner, Apple (`neb-miner-metal`) | the Metal kernel (`node/crates/neb-metalminer/src/neb_share.metal`), one threadgroup per attempt | none | the kernel |
 
 ## Requirements
 
@@ -18,6 +19,7 @@ validates every block and share with the C reference, and CI checks that `neb-no
 | AVX-512 (CPU) | x86-64 with AVX-512 F, BW, VL, DQ and VNNI, and a C compiler that accepts them (gcc, clang or MSVC) | the reference is used, with a message |
 | K0 (GPU) | NVIDIA GPU of compute capability 7.5 or later, CUDA 13 toolkit to build, driver 580 or later | the GPU miner is not built or does not start |
 | K1, K2 (GPU) | compute capability 8.0 or later (int8 `mma.sync`) | K0 is used on that device, with a message |
+| Metal (Apple GPU) | macOS on Apple silicon, Rust and a C compiler; the kernel source is compiled by the device at start (`newLibraryWithSource:`), so no Xcode and no offline `metal` compiler are needed | `neb-miner-metal` is not built on other platforms |
 
 ## Safeguards
 
@@ -43,6 +45,8 @@ probability for a systematic fault. Enable an engine on new hardware only after 
 node/target/release/neb-miner-cpu --synthetic --engine avx512 --selftest             # exit code 0 when the engine passes
 node/target/release/neb-miner-gpu --selftest                                          # K0, and K1 and K2 where supported
 node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../neb-datasets.bin --gpu-kernel k2
+node/target/release/neb-miner-metal --selftest --dataset ../neb-datasets.bin            # the Apple GPU, K0 in Metal
+node/target/release/neb-miner-metal --node 127.0.0.1:3441 --dataset ../neb-datasets.bin
 ```
 
 ## Numerical range

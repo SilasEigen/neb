@@ -46,4 +46,4 @@ ENV NVIDIA_VISIBLE_DEVICES=all NVIDIA_DRIVER_CAPABILITIES=compute,utility
 USER neb:neb
 WORKDIR /data
 ENTRYPOINT ["neb-miner-gpu"]
-CMD ["--node", "127.0.0.1:3441", "--dataset", "/data/mnist-q8.bin", "--plain"]
+CMD ["--node", "127.0.0.1:3441", "--dataset", "/data/neb-datasets.bin", "--plain"]

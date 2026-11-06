@@ -16,7 +16,7 @@ mkdir -p "$(dirname "$CUSTOM_LOG_BASENAME")" data
 pkill -x neb-node 2> /dev/null && sleep 1
 rm -f stats.json
 
-node_args=(--run --dataset mnist-q8.bin --datadir data --miner-lock "$NEB_LOCK" --color never)
+node_args=(--run --dataset neb-datasets.bin --datadir data --miner-lock "$NEB_LOCK" --color never)
 for seed in $NEB_SEEDS; do
 	node_args+=(--seed "$seed")
 done
@@ -35,5 +35,5 @@ for _ in $(seq 120); do
 done
 
 # shellcheck disable=SC2086
-./neb-miner-gpu --node 127.0.0.1:3441 --dataset mnist-q8.bin --plain --stats stats.json $NEB_MINER_ARGS 2>&1 | tee -a "$CUSTOM_LOG_BASENAME.log"
+./neb-miner-gpu --node 127.0.0.1:3441 --dataset neb-datasets.bin --plain --stats stats.json $NEB_MINER_ARGS 2>&1 | tee -a "$CUSTOM_LOG_BASENAME.log"
 exit "${PIPESTATUS[0]}"

@@ -10,23 +10,23 @@ This guide covers the NEB test network: parameters, genesis, running a node, a C
 | peer-to-peer port | 3440 |
 | work service port | 3441 (loopback) |
 | JSON-RPC port | 8432 (loopback) |
-| default data directory | `./neb-testnet-data` |
+| default data directory | `./neb-testnet2-data` |
 | genesis target | `0xd5800000` (2^236); the proof-of-work limit is the same |
-| training samples | the 60,000 MNIST training images, one file pinned by hash |
+| training samples | two datasets in one file pinned by hash: slot 0, 13,404 Kepler DR24 transit signals (NASA Exoplanet Archive; 1 planet candidate, 0 false positive); slot 1, 34,464 retinal OCT scans (OCTMNIST, CC BY 4.0; 4 labels). A block of height h trains slot h mod 2 |
 
-The release has this file as `mnist-q8.bin`; download it and check its hash, or create it once, outside the source tree, and check its hash (`tools/make_mnist_dataset.py` needs Python with numpy and downloads MNIST once):
+The release has this file as `neb-datasets.bin`; download it and check its hash, or create it once, outside the source tree, and check its hash. `tools/make_datasets.py` needs Python with numpy; it downloads the DR24 TCE table and the DV light curves from the NASA Exoplanet Archive (about 135 GB that pass through the cache once; only 784 values per signal are kept) and OCTMNIST from Zenodo (55 MB), and also writes the samples kept out of the chain (`kepler-test-q8.bin`, `retina-test-q8.bin`):
 
 ```
-python tools/make_mnist_dataset.py --out /path/to/mnist-q8.bin
-neb-node --dataset-hash /path/to/mnist-q8.bin
-1a6ab4347b5e7d8188d665124707df7a1a2a28bf60e527e167a894fdec373ed2
+python tools/make_datasets.py --cache /path/to/cache --out /path/to/neb-datasets.bin
+neb-node --dataset-hash /path/to/neb-datasets.bin
+b1008b970f87083179a7b297b8f0fbec4cfc8cc66f605cf2fb2c03bad8b6f37a
 ```
 
 Start a node and a CPU miner:
 
 ```
-neb-node --run --dataset /path/to/mnist-q8.bin --datadir ./data-a
-neb-miner-cpu --node 127.0.0.1:3441 --dataset /path/to/mnist-q8.bin --threads 8
+neb-node --run --dataset /path/to/neb-datasets.bin --datadir ./data-a
+neb-miner-cpu --node 127.0.0.1:3441 --dataset /path/to/neb-datasets.bin --threads 8
 ```
 
 The node refuses to start when the dataset file does not have the pinned hash. The miner shows a dashboard (see "Dashboard of the miners") or, with `--plain`, a status line every 5 s: attempts per second, shares, and blocks found (accepted and rejected by the node). An attempt meets the genesis target with probability 2^-20 and the share target with probability 2^-15, so the expected time to a block is 2^20 divided by the attempt rate, and a block comes with about 32 shares. The shares of a block train the model one block later.
@@ -44,14 +44,14 @@ The node refuses to start when the dataset file does not have the pinned hash. T
 | JSON-RPC port | 8432, loopback only |
 | software version | 0.1.0 |
 | protocol version | 2 (a node of protocol 1, the first share rule, does not connect) |
-| network magic | `6bcb09e5` (four bytes, hex) |
+| network magic | `cd16272d` (four bytes, hex) |
 | default maximum peers | 8 (`--max-peers`) |
 | genesis timestamp | 1793905200 (2026-11-05 19:00:00 UTC) |
 | genesis target bits | `0xd5800000` (2^236) |
 | proof-of-work limit bits | `0xd5800000` (2^236, the genesis target) |
 | share target | the block target times 32 (2^241 at the genesis target) |
-| genesis id | `7c43ea053c733620043a1aa67d54e66eb41d4ac0c6d5a53f3a29176ace454cd2` |
-| dataset file hash (BLAKE3) | `1a6ab4347b5e7d8188d665124707df7a1a2a28bf60e527e167a894fdec373ed2` |
+| genesis id | `4b9cdfd8a859c2cde2fc768b2264f67c5b4d3ec839cd070fcfdab478d0e55e28` |
+| dataset file hash (BLAKE3) | `b1008b970f87083179a7b297b8f0fbec4cfc8cc66f605cf2fb2c03bad8b6f37a` |
 
 The magic is the first four bytes of `BLAKE3("neb-testnet-magic" || genesis_id)`, so two chains with different genesis blocks cannot exchange messages by accident. The initial model is derived from the genesis id (`spec/shares.md` section 11.2).
 
@@ -82,15 +82,15 @@ The genesis coinbase pays the reward of height 0: 19 coins to a lock that no key
 ```
 network     : testnet
 beacon      : 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
-genesis id  : 7c43ea053c733620043a1aa67d54e66eb41d4ac0c6d5a53f3a29176ace454cd2
+genesis id  : 4b9cdfd8a859c2cde2fc768b2264f67c5b4d3ec839cd070fcfdab478d0e55e28
 genesis time: 1793905200
 genesis bits: 0xd5800000
 pow limit   : 0xd5800000
-magic       : 6bcb09e5
+magic       : cd16272d
 p2p port    : 3440
 work port   : 3441
 rpc port    : 8432
-dataset hash: 1a6ab4347b5e7d8188d665124707df7a1a2a28bf60e527e167a894fdec373ed2
+dataset hash: b1008b970f87083179a7b297b8f0fbec4cfc8cc66f605cf2fb2c03bad8b6f37a
 ```
 
 ### Keys
@@ -130,13 +130,13 @@ The binaries are in `node/target/release`.
 ## Running a node
 
 ```
-neb-node --run --dataset /path/to/mnist-q8.bin --datadir ./data-a
+neb-node --run --dataset /path/to/neb-datasets.bin --datadir ./data-a
 ```
 
 The node opens or creates the store, loads the genesis block, listens for peers on 3440, serves JSON-RPC on 127.0.0.1:8432 and serves miners on 127.0.0.1:3441. A second node on the same machine needs other ports:
 
 ```
-neb-node --run --dataset /path/to/mnist-q8.bin --datadir ./data-b --port 3450 --work-port 3451 --rpc-port 8433 --connect 127.0.0.1:3440
+neb-node --run --dataset /path/to/neb-datasets.bin --datadir ./data-b --port 3450 --work-port 3451 --rpc-port 8433 --connect 127.0.0.1:3440
 ```
 
 Both nodes must have the same genesis id; the node prints it at start. Options:
@@ -170,7 +170,7 @@ Both nodes must have the same genesis id; the node prints it at start. Options:
 A relay is a node that accepts many inbound peers; the nodes of the miners dial it. It needs no miner and no wallet. By estimate, two vCPUs and 2 GiB of RAM should be enough (not measured on a deployed relay): a block costs about 17 ms of one core to check, the node keeps the dataset (47 MB) and the model states (about 46 MB), and the traffic is small.
 
 ```
-neb-node --run --dataset /srv/neb/mnist-q8.bin --datadir /srv/neb/data --listen 0.0.0.0 --max-peers 256 --seed other-relay.example.org:3440 --color never
+neb-node --run --dataset /srv/neb/neb-datasets.bin --datadir /srv/neb/data --listen 0.0.0.0 --max-peers 256 --seed other-relay.example.org:3440 --color never
 ```
 
 - **Ports.** Open TCP 3440 inbound. The work service (3441) and the JSON-RPC (8432) stay on the loopback interface of the relay.
@@ -190,7 +190,7 @@ After=network-online.target
 
 [Service]
 User=neb
-ExecStart=/usr/local/bin/neb-node --run --dataset /var/lib/neb/mnist-q8.bin --datadir /var/lib/neb/data --listen 0.0.0.0 --max-peers 256 --color never
+ExecStart=/usr/local/bin/neb-node --run --dataset /var/lib/neb/neb-datasets.bin --datadir /var/lib/neb/data --listen 0.0.0.0 --max-peers 256 --color never
 Restart=on-failure
 LimitNOFILE=4096
 
@@ -298,7 +298,7 @@ The server listens on 127.0.0.1:8432 by default and accepts HTTP POST with a JSO
 - `getrawmempool` returns transaction ids
 - `getpeerinfo`
 - `getinfo` returns version, network, height, best block id, chain id, connection and miner counts, `bits`, ports, and `weightshash`, the weights hash of the model of the tip
-- `getmodel` returns the packed weights of the model of the tip with its height, block id and weights hash; `getmodel "genesis"` returns those of the initial model
+- `getmodel [SLOT]` returns the packed weights of the model of slot SLOT (0 Kepler, 1 retina; default 0) in the state of the tip, with its height, block id, slot, dataset name and weights hash; `getmodel [SLOT, "genesis"]` returns those of the initial model of that slot. `getinfo` gives the hash of the whole state (`weightshash`) and the number of slots. `neb-node --model-accuracy --dataset FILE --datadir DIR` replays a stopped node's chain and counts, per slot, the samples the initial model and the chain model classify correctly.
 - `sendrawtransaction hex`
 
 Example:

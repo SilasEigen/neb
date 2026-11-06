@@ -170,34 +170,39 @@ This section defines how the share step above becomes the proof of work and the 
 | MAX_SHARES_PER_BLOCK | 256 | share records one block lists |
 | SHARE_RECORD_BYTES | 40 | bytes of a share record (section 11.2) |
 | MODEL_DEPTH | 100 | levels below the tip whose states a node keeps |
-| D | 1 | blocks between the state of a share and the state it updates |
+| D | 1 | blocks between the state of a share and the state it updates, for K = 1 |
+| K | number of datasets of the network | model slots of the chain state (2 on the testnet of protocol 3) |
 
 ### 11.1 Proof of work
 
-The key of an attempt is the block id: for a block `B` with header `H_B` (80 bytes, `spec/node.md` section 4.1), `key = BLAKE3(H_B)`. `B` has a valid proof of work when
+The key of an attempt is the block id: for a block `B` of height `h` with header `H_B` (80 bytes, `spec/node.md` section 4.1), `key = BLAKE3(H_B)`. `B` has a valid proof of work when
 
 ```
-ticket(M(P), BLAKE3(H_B)) <= target(B.bits)
+ticket(M(P)[h mod K], D[h mod K], BLAKE3(H_B)) <= target(B.bits)
 ```
 
-where `P` is the parent of `B`, `ticket` is the ticket of section 5.4 evaluated with the weights of the state `M(P)` (section 11.2), and the target is the compact target of `spec/node.md` section 4.1, compared as 256-bit little-endian integers. The genesis block carries no proof. A header alone cannot be checked, because `M(P)` depends on the bodies of the ancestors of `B`.
+where `P` is the parent of `B`, `ticket` is the ticket of section 5.4 evaluated with the weights of the model of slot `h mod K` in the state `M(P)` (section 11.2) and the samples of the dataset `D[h mod K]` of that slot (section 11.6), and the target is the compact target of `spec/node.md` section 4.1, compared as 256-bit little-endian integers. The genesis block carries no proof. A header alone cannot be checked, because `M(P)` depends on the bodies of the ancestors of `B`.
 
 ### 11.2 States and share lists
 
-The state of the genesis block is the initial state of section 4 for the seed equal to the genesis block id: `M(genesis) = init(genesis id)`.
+A network has K >= 1 datasets `D[0] .. D[K-1]` (section 11.6), and the state of a block is a list of K models, one per dataset: `M(B) = (M(B)[0], ..., M(B)[K-1])`, each a state of section 4. The block of height `h` works on slot `h mod K`. With K = 1 the state is one model and the rules below are those of protocol 2.
+
+The state of the genesis block is the initial state of section 4 for each slot: with K = 1, `M(genesis)[0] = init(genesis id)`; with K >= 2, `M(genesis)[i] = init(BLAKE3("neb-model-slot" || genesis id || LE32(i)))`.
 
 Let `B` be a block, `P` its parent and `PP` the parent of `P` (`PP = P` when `P` is the genesis block). `B` lists a sequence of share records `r_1 < r_2 < ... < r_k` (`k <= MAX_SHARES_PER_BLOCK`). A record has 40 bytes, `body_root (32) || LE32(time) || LE32(nonce)`, and the records are in strictly increasing order as byte strings, so a list has no duplicate and one encoding. The block of height 1 lists none.
 
-The share header of a record `r` is the 80-byte header of `spec/node.md` section 4.1 with version 1, `parent` equal to the id of `PP`, the `body_root`, `time` and `nonce` of `r`, and the `bits` of `P`. `r` is a valid share of the round of `P` when
+The share header of a record `r` is the 80-byte header of `spec/node.md` section 4.1 with version 1, `parent` equal to the id of `PP`, the `body_root`, `time` and `nonce` of `r`, and the `bits` of `P`. `r` is a valid share of the round of `P` when, with `t = (h - 1) mod K` the slot of `P` (height `h - 1`),
 
 ```
-ticket(M(PP), BLAKE3(share header of r)) <= share_target(P.bits)
+ticket(M(PP)[t], D[t], BLAKE3(share header of r)) <= share_target(P.bits)
 share_target(bits) = min(target(bits) * 2^SHARE_RATIO_LOG2, 2^256 - 1)
 ```
 
 A share is bound to the parent of the round, not to the header of `P`. Any header whose parent is `PP`, whatever its coinbase, share list or time, and whether or not it became a block, is a share of the same round. The header of `P` and the headers of competing blocks with the parent `PP` are valid shares of it: their ticket is at most the block target, which is below the share target. A round yields about 32 shares for one block, from the attempts of all miners on `PP`.
 
-The state of `B` is `M(B) = M(P)` when `k = 0`. When `k >= 1`, the key of share `j` is `BLAKE3(share header of r_j)`; the clipped gradients of the `k` shares are computed on `M(PP)` (section 5.2) and summed in int32; the model step of section 6 applies this sum to `M(P)`, which gives `M(B)`. The shares are computed on the state one block older than the state they update, and the sum does not depend on the order of the list.
+The state of `B` is `M(B) = M(P)` when `k = 0`. When `k >= 1`, the key of share `j` is `BLAKE3(share header of r_j)`; the clipped gradients of the `k` shares are computed on `M(PP)[t]` with the samples of `D[t]` (section 5.2) and summed in int32; the model step of section 6 applies this sum to `M(P)[t]`, which gives `M(B)[t]`; every other slot of `M(B)` equals that of `M(P)`. A share trains the model it was mined on. With K = 1 the shares are computed on the state one block older than the state they update; with K >= 2, `M(PP)[t] = M(P)[t]` (the parent of `B` updated another slot), so a share is computed on the model it updates. The sum does not depend on the order of the list.
+
+The hash of a state is the weights hash of its model when K = 1, and `BLAKE3("neb-models" || weights_hash(M[0]) || ... || weights_hash(M[K-1]))` (section 7) when K >= 2.
 
 ### 11.3 Body and commitment
 
@@ -217,9 +222,9 @@ A node keeps the state of every connected block of the last `MODEL_DEPTH + 1` le
 
 ### 11.5 Work service
 
-The node mines a job for a child of the tip `P` on `M(P)` and sends it in two frames, `spec/node.md` section 7.1:
+The node mines a job for a child of the tip `P` (height `h`) on `M(P)[h mod K]` and sends it in two frames, `spec/node.md` section 7.1:
 
-- the `model` frame (type 7, node to miner): `weights_hash (32) || pack(W1) || pack(W2)` (50 816 bytes of weights), the weights of `M(P)` with the hash of section 7. The node sends it immediately before every job, in the same write: when a miner connects, when the best block changes and after a rejected submission;
+- the `model` frame (type 7, node to miner): `slot (1) || weights_hash (32) || pack(W1) || pack(W2)` (50 816 bytes of weights), the slot `h mod K` and the weights of `M(P)[h mod K]` with the hash of section 7. The miner evaluates the attempts of the next job on the samples of the dataset of that slot. The node sends it immediately before every job, in the same write: when a miner connects, when the best block changes and after a rejected submission;
 - the job (type 2), which carries the block target, the share target, the share-list commitment `shares_root` of the block and the data to build the coinbase and the header (`spec/node.md` section 7.1). The ticket of an attempt is evaluated on the model of the last `model` frame.
 
 The reference header of a job is the header the miner would build with an extranonce of `extranonce_size` zero bytes, the time `time_start` and a nonce set to 0. A miner makes its attempts on the reference header, rolling the nonce: an attempt whose ticket on `M(P)` meets the share target of the job is a share, and one that meets the target of the job is a solution. A share is bound to the parent `P`, not to the header (section 11.2), so a miner may change job, extranonce or time at any moment without losing the shares it found.
@@ -231,4 +236,6 @@ The reference header of a job is the header the miner would build with an extran
 
 ### 11.6 Dataset file
 
-The samples of a network are a file that the network parameters pin by its BLAKE3 hash. The file is the 4 bytes `NMD1`, the sample count `N` as a little-endian u32 (`N >= 1`), then `N` records of 785 bytes: 784 pixels in 0..7 and the label in 0..9. A node refuses to start on a file with another hash, and a file whose size, pixels or labels do not fit the format is invalid. The pixels of the MNIST network file are `floor(x / 32)` of the 8-bit pixels `x`, in the order of the 60 000 training images.
+The samples of a network are a file that the network parameters pin by its BLAKE3 hash. A dataset is the 4 bytes `NMD1`, the sample count `N` as a little-endian u32 (`N >= 1`), then `N` records of 785 bytes: 784 values in 0..7 and the label in 0..9. The file is one dataset (K = 1), or a set of K datasets, `NMDS || LE32(K) || dataset 0 || ... || dataset K-1` with `1 <= K <= 16`, in slot order. A node refuses to start on a file with another hash, and a file whose size, values or labels do not fit the format, or that has bytes after its last dataset, is invalid.
+
+The testnet of protocol 3 has K = 2: slot 0 holds the transit signals of the Kepler Q1-Q17 DR24 TCE table of the NASA Exoplanet Archive (label 1 for a planet candidate, 0 for an astrophysical false positive or a non-transiting phenomenon; 583 values of a global view of the folded light curve and 201 of a local view around the transit, each the depth of the dip below the median in 0..7), slot 1 the retinal OCT scans of OCTMNIST (MedMNIST v2, CC BY 4.0; labels 0 to 3; value `clip((x - 30) >> 4, 0, 7)` of the 8-bit pixel `x`, the same number of scans per label). `tools/make_datasets.py` builds the file; 15 % of the Kepler stars and the OCTMNIST test split are kept out of it, to measure the models on samples they never trained on. The pixels of the MNIST network file are `floor(x / 32)` of the 8-bit pixels `x`, in the order of the 60 000 training images.

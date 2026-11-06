@@ -42,7 +42,7 @@ probability for a systematic fault. Enable an engine on new hardware only after 
 ```bash
 node/target/release/neb-miner-cpu --synthetic --engine avx512 --selftest             # exit code 0 when the engine passes
 node/target/release/neb-miner-gpu --selftest                                          # K0, and K1 and K2 where supported
-node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../mnist-q8.bin --gpu-kernel k2
+node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../neb-datasets.bin --gpu-kernel k2
 ```
 
 ## Numerical range

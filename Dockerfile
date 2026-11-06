@@ -55,4 +55,4 @@ FROM runtime AS miner-cpu
 LABEL org.opencontainers.image.title="neb-miner-cpu"
 COPY --from=build /out/neb-miner-cpu /usr/local/bin/
 ENTRYPOINT ["neb-miner-cpu"]
-CMD ["--node", "127.0.0.1:3441", "--dataset", "/data/mnist-q8.bin", "--plain"]
+CMD ["--node", "127.0.0.1:3441", "--dataset", "/data/neb-datasets.bin", "--plain"]

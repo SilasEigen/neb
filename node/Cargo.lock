@@ -350,6 +350,17 @@ name = "neb-json"
 version = "0.1.0"
 
 [[package]]
+name = "neb-metalminer"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "cc",
+ "neb-block",
+ "neb-cpuminer",
+ "neb-pow",
+]
+
+[[package]]
 name = "neb-node"
 version = "0.1.0"
 dependencies = [

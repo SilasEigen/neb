@@ -298,6 +298,7 @@ The server listens on 127.0.0.1:8432 by default and accepts HTTP POST with a JSO
 - `getrawmempool` returns transaction ids
 - `getpeerinfo`
 - `getinfo` returns version, network, height, best block id, chain id, connection and miner counts, `bits`, ports, and `weightshash`, the weights hash of the model of the tip
+- `getmodel` returns the packed weights of the model of the tip with its height, block id and weights hash; `getmodel "genesis"` returns those of the initial model
 - `sendrawtransaction hex`
 
 Example:

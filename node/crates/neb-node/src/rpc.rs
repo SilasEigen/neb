@@ -19,6 +19,7 @@ use std::time::Duration;
 
 use neb_chain::tx::Transaction;
 use neb_json::Value;
+use neb_pow::shares::Model;
 
 use crate::node::Node;
 
@@ -286,6 +287,30 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             map.insert("weightshash".to_string(), Value::String(hex(&node.weights_hash())));
             map.insert("workport".to_string(), Value::Number(net.work_port as i64));
             map.insert("p2pport".to_string(), Value::Number(net.p2p_port as i64));
+            Ok(Value::Object(map))
+        }
+        // The packed weights (spec/shares.md section 7) of the model of the tip, or with "genesis" of the initial model
+        // derived from the genesis id; the residuals are not included. Read-only, for explorers.
+        "getmodel" => {
+            let (height, id, model) = match params.first() {
+                None => loop {
+                    // the tip is read again after its model, so the three values belong to the same block
+                    let id = node.tip_id();
+                    let model = node.tip_model();
+                    if node.tip_id() == id {
+                        break (node.height_of(&id).unwrap_or(0), id, model);
+                    }
+                },
+                Some(Value::String(g)) if g == "genesis" => {
+                    (0, node.chain_id(), Arc::new(Model::from_seed(&node.chain_id())))
+                }
+                Some(_) => return Err(RpcError::new(-32602, "getmodel takes no parameter or \"genesis\"")),
+            };
+            let mut map = BTreeMap::new();
+            map.insert("height".to_string(), Value::Number(height as i64));
+            map.insert("blockhash".to_string(), Value::String(hex(&id)));
+            map.insert("weightshash".to_string(), Value::String(hex(&model.weights_hash())));
+            map.insert("weights".to_string(), Value::String(hex(&model.packed_weights())));
             Ok(Value::Object(map))
         }
         // Mempool admission only (spec/node.md section 6.4); the node announces

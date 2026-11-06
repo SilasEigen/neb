@@ -222,6 +222,7 @@ The node serves JSON-RPC over HTTP POST on a loopback port. The request is a JSO
 | `getrawmempool` | none | array of txids |
 | `getpeerinfo` | none | array of objects: `id`, `addr`, `inbound`, `version`, `subver`, `height`, `handshake`, `connected` (seconds) |
 | `getinfo` | none | object: `version`, `protocolversion`, `network`, `testnet`, `blocks`, `bestblockhash`, `chainid`, `connections`, `miners`, `bits`, `weightshash`, `workport`, `p2pport` |
+| `getmodel` | none, or `"genesis"` | object: `height`, `blockhash`, `weightshash` and `weights`, the packed weights of the model of the tip (or of the initial model) as hex, 50,816 bytes (`spec/shares.md` section 7); residuals are not included |
 | `sendrawtransaction` | transaction as hexadecimal | txid; validated as in 6.4 and announced to the peers |
 
 Usage is in `docs/testnet.md`.

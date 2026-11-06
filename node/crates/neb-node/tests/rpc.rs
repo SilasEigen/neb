@@ -132,6 +132,35 @@ fn read_methods_and_errors() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// getmodel gives the packed weights of the tip model (the weights hash of getinfo) and, with "genesis", those of the
+// initial model; any other parameter is refused.
+#[test]
+fn getmodel_gives_the_weights_of_the_tip_and_of_the_genesis() {
+    let dir = temp_dir("model");
+    let node = Node::open(NodeConfig { network: network(demo::MINER_LOCK), data_dir: dir.clone(), verify_pow: false })
+        .expect("node");
+    let blocks = add_chain(&node, 2);
+    let rpc = node.start_rpc("127.0.0.1:0".parse().unwrap()).expect("rpc");
+    let response = call(rpc.addr, "getmodel", vec![]);
+    let tip = result(&response);
+    assert_eq!(tip.get("height").unwrap().as_i64(), Some(2));
+    assert_eq!(tip.get("blockhash").unwrap().as_str().unwrap(), hex(&blocks[1].id()));
+    assert_eq!(tip.get("weightshash").unwrap().as_str().unwrap(), hex(&node.weights_hash()));
+    let weights = decode_hex(tip.get("weights").unwrap().as_str().unwrap());
+    assert_eq!(weights, node.tip_model().packed_weights());
+    assert_eq!(weights.len(), 50_816);
+
+    let response = call(rpc.addr, "getmodel", vec![Value::String("genesis".into())]);
+    let genesis = result(&response);
+    let initial = neb_pow::shares::Model::from_seed(&node.chain_id());
+    assert_eq!(genesis.get("height").unwrap().as_i64(), Some(0));
+    assert_eq!(genesis.get("weightshash").unwrap().as_str().unwrap(), hex(&initial.weights_hash()));
+    assert_eq!(error_code(&call(rpc.addr, "getmodel", vec![Value::Number(1)])), -32602);
+    drop(rpc);
+    drop(node);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn decode_hex(text: &str) -> Vec<u8> {
     (0..text.len() / 2).map(|i| u8::from_str_radix(&text[2 * i..2 * i + 2], 16).unwrap()).collect()
 }

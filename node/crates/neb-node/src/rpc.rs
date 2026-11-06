@@ -19,7 +19,6 @@ use std::time::Duration;
 
 use neb_chain::tx::Transaction;
 use neb_json::Value;
-use neb_pow::shares::Model;
 
 use crate::node::Node;
 
@@ -268,8 +267,8 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
                 })
                 .collect(),
         )),
-        // `bits` is the compact target of the tip; `weightshash` is the weights
-        // hash of the tip model (spec/shares.md section 7).
+        // `bits` is the compact target of the tip; `weightshash` is the hash of
+        // the state of the tip (spec/shares.md section 7), `slots` its models.
         "getinfo" => {
             let net = node.network();
             let mut map = BTreeMap::new();
@@ -285,30 +284,47 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             let bits = node.header_at(node.height()).map(|h| h.bits).unwrap_or(net.genesis.header.bits);
             map.insert("bits".to_string(), Value::Number(bits as i64));
             map.insert("weightshash".to_string(), Value::String(hex(&node.weights_hash())));
+            map.insert("slots".to_string(), Value::Number(net.chain.datasets.len() as i64));
             map.insert("workport".to_string(), Value::Number(net.work_port as i64));
             map.insert("p2pport".to_string(), Value::Number(net.p2p_port as i64));
             Ok(Value::Object(map))
         }
-        // The packed weights (spec/shares.md section 7) of the model of the tip, or with "genesis" of the initial model
-        // derived from the genesis id; the residuals are not included. Read-only, for explorers.
+        // The packed weights (spec/shares.md section 7) of the model of one slot in the state of the tip, or with
+        // "genesis" in the initial state; the residuals are not included. Parameters: none (slot 0), a slot number,
+        // "genesis" (slot 0), or a slot number and "genesis". Read-only, for explorers.
         "getmodel" => {
-            let (height, id, model) = match params.first() {
-                None => loop {
-                    // the tip is read again after its model, so the three values belong to the same block
-                    let id = node.tip_id();
-                    let model = node.tip_model();
-                    if node.tip_id() == id {
-                        break (node.height_of(&id).unwrap_or(0), id, model);
-                    }
-                },
-                Some(Value::String(g)) if g == "genesis" => {
-                    (0, node.chain_id(), Arc::new(Model::from_seed(&node.chain_id())))
-                }
-                Some(_) => return Err(RpcError::new(-32602, "getmodel takes no parameter or \"genesis\"")),
+            let k = node.network().chain.datasets.len();
+            let (slot, genesis) = match (params.first(), params.get(1)) {
+                (None, None) => (0, false),
+                (Some(Value::String(g)), None) if g == "genesis" => (0, true),
+                (Some(Value::Number(n)), None) => (*n, false),
+                (Some(Value::Number(n)), Some(Value::String(g))) if g == "genesis" => (*n, true),
+                _ => return Err(RpcError::new(-32602, "getmodel takes [slot] and optionally \"genesis\"")),
             };
+            if slot < 0 || slot as usize >= k {
+                return Err(RpcError::new(-32602, format!("slot must be 0 to {}", k - 1)));
+            }
+            let slot = slot as usize;
+            let (height, id, models) = if genesis {
+                (0, node.chain_id(), neb_chain::initial_models(&node.chain_id(), k))
+            } else {
+                loop {
+                    // the tip is read again after its state, so the three values belong to the same block
+                    let id = node.tip_id();
+                    let models = node.tip_models();
+                    if node.tip_id() == id {
+                        break (node.height_of(&id).unwrap_or(0), id, models);
+                    }
+                }
+            };
+            let model = &models[slot];
             let mut map = BTreeMap::new();
             map.insert("height".to_string(), Value::Number(height as i64));
             map.insert("blockhash".to_string(), Value::String(hex(&id)));
+            map.insert("slot".to_string(), Value::Number(slot as i64));
+            map.insert("slots".to_string(), Value::Number(k as i64));
+            let name = crate::params::DATASET_NAMES.get(slot).copied().unwrap_or("");
+            map.insert("dataset".to_string(), Value::String(name.into()));
             map.insert("weightshash".to_string(), Value::String(hex(&model.weights_hash())));
             map.insert("weights".to_string(), Value::String(hex(&model.packed_weights())));
             Ok(Value::Object(map))

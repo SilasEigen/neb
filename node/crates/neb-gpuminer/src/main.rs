@@ -23,9 +23,9 @@ use std::time::{Duration, Instant};
 use neb_cpuminer::dashboard::{self, Hardware, Info, Outcome};
 use neb_gpuminer::cuda::{self, CudaScanner};
 use neb_gpuminer::{
-    BATCH, Fallback, GpuKernel, Scanner, flatten, spawn_worker_with_fallback, stats, telemetry, unpack_weights,
+    BATCH, Fallback, GpuKernel, Lane, Scanner, flatten, spawn_worker_with_fallback, stats, telemetry, unpack_weights,
 };
-use neb_pow::shares::{Dataset, FileDataset, Model, SharedDataset, SyntheticDataset};
+use neb_pow::shares::{Dataset, Model, SharedDataset, SyntheticDataset, load_datasets};
 
 /// Nonces a scan can report; a round has about 32 shares per block, so this is far above the need.
 const MAX_HITS: u32 = 4096;
@@ -173,10 +173,11 @@ fn run(args: &[String]) -> i32 {
         eprintln!("no CUDA device found");
         return 1;
     }
-    let dataset: SharedDataset = match (synthetic || (selftest && dataset_path.is_none()), dataset_path) {
-        (true, _) => Arc::new(SyntheticDataset::new()),
-        (false, Some(path)) => match FileDataset::load(std::path::Path::new(&path), None) {
-            Ok(d) => Arc::new(d),
+    // One dataset per model slot, in slot order (a dataset set file, or a single dataset).
+    let datasets: Vec<SharedDataset> = match (synthetic || (selftest && dataset_path.is_none()), dataset_path) {
+        (true, _) => vec![Arc::new(SyntheticDataset::new())],
+        (false, Some(path)) => match load_datasets(std::path::Path::new(&path), None) {
+            Ok(d) => d,
             Err(e) => {
                 eprintln!("cannot load the dataset: {e}");
                 return 1;
@@ -185,38 +186,38 @@ fn run(args: &[String]) -> i32 {
         (false, None) => return usage(),
     };
     if selftest {
-        return self_test(&devices, requested, &*dataset);
+        return datasets.iter().map(|d| self_test(&devices, requested, &**d)).max().unwrap_or(0);
     }
     let Some(node) = node else { return usage() };
-    let scanners =
-        match open_all(&devices, &*dataset, requested.unwrap_or(GpuKernel::K0), &Model::from_seed(&[0u8; 32])) {
-            Ok(s) => s,
+    // per dataset, one scanner per device; then regrouped per device, one lane per dataset
+    let mut per_dataset = Vec::with_capacity(datasets.len());
+    for d in &datasets {
+        match open_all(&devices, &**d, requested.unwrap_or(GpuKernel::K0), &Model::from_seed(&[0u8; 32])) {
+            Ok(s) => per_dataset.push(s),
             Err(e) => {
                 eprintln!("{e}");
                 return 1;
             }
-        };
+        }
+    }
+    let kernels: Vec<GpuKernel> = per_dataset[0].iter().map(|s| s.2).collect();
+    let mut lanes: Vec<Vec<Lane>> = devices.iter().map(|_| Vec::new()).collect();
+    for (d, setups) in datasets.iter().zip(per_dataset) {
+        for (device, (scanner, fallback, _)) in setups.into_iter().enumerate() {
+            lanes[device].push(Lane { dataset: d.clone(), scanner: Box::new(scanner), fallback });
+        }
+    }
     let mismatches = Arc::new(AtomicU64::new(0));
     let fallbacks = Arc::new(AtomicU64::new(0));
     let counters: Vec<Arc<AtomicU64>> = devices.iter().map(|_| Arc::new(AtomicU64::new(0))).collect();
-    let kernels: Vec<GpuKernel> = scanners.iter().map(|s| s.2).collect();
     let miner = {
-        let (dataset, mismatches, fallbacks, counters) =
-            (dataset.clone(), mismatches.clone(), fallbacks.clone(), counters.clone());
+        let (mismatches, fallbacks, counters) = (mismatches.clone(), fallbacks.clone(), counters.clone());
         neb_cpuminer::start_with(node.as_str(), concat!("neb-miner-gpu ", env!("CARGO_PKG_VERSION")), move |session| {
-            scanners
+            lanes
                 .into_iter()
                 .zip(counters)
-                .map(|((scanner, fallback, _), attempts)| {
-                    spawn_worker_with_fallback(
-                        session.clone(),
-                        dataset.clone(),
-                        Box::new(scanner),
-                        fallback,
-                        attempts,
-                        mismatches.clone(),
-                        fallbacks.clone(),
-                    )
+                .map(|(lanes, attempts)| {
+                    spawn_worker_with_fallback(session.clone(), lanes, attempts, mismatches.clone(), fallbacks.clone())
                 })
                 .collect()
         })

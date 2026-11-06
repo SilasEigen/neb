@@ -7,7 +7,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use neb_block::Target;
 use neb_chain::demo;
-use neb_gpuminer::{Scanner, flatten, spawn_worker, spawn_worker_with_fallback, unpack_weights};
+use neb_gpuminer::{Lane, Scanner, flatten, spawn_worker, spawn_worker_with_fallback, unpack_weights};
 use neb_node::params::NetworkParams;
 use neb_node::style::{ColorMode, Live, Log};
 use neb_node::{Node, NodeConfig};
@@ -227,15 +227,8 @@ fn a_faulty_kernel_is_replaced(fault: Fault, magic_last: u8, name: &str) {
                     fault: Fault::None,
                 }) as Box<dyn Scanner>)
             });
-            vec![spawn_worker_with_fallback(
-                session.clone(),
-                dataset,
-                Box::new(faulty),
-                Some(fallback),
-                device_attempts,
-                mismatches,
-                fallbacks,
-            )]
+            let lane = Lane { dataset, scanner: Box::new(faulty), fallback: Some(fallback) };
+            vec![spawn_worker_with_fallback(session.clone(), vec![lane], device_attempts, mismatches, fallbacks)]
         })
         .expect("miner")
     };

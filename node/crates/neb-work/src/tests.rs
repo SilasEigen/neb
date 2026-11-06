@@ -287,11 +287,12 @@ fn submit_rejects_bad_shapes() {
 #[test]
 fn the_model_frame_carries_the_weights_and_checks_their_hash() {
     let model = neb_pow::shares::Model::from_seed(&[5u8; 32]);
-    let f = model_frame(&model);
+    let f = model_frame(1, &model);
     let FrameOut::Message { msg_type, payload, .. } = parse_frame(&f).unwrap() else { panic!() };
     assert_eq!(msg_type, MSG_MODEL);
-    assert_eq!(payload.len(), 32 + 50_816);
-    let copy = decode_model(payload).unwrap();
+    assert_eq!(payload.len(), 1 + 32 + 50_816);
+    let (slot, copy) = decode_model(payload).unwrap();
+    assert_eq!(slot, 1);
     assert_eq!(copy.weights_hash(), model.weights_hash());
     let mut bad = payload.to_vec();
     bad[40] ^= 1;
@@ -322,7 +323,7 @@ fn the_miner_assembles_the_header_of_the_node() {
 #[test]
 fn reported_shares_are_checked_kept_and_listed_by_the_next_job() {
     let mut state = demo_easy_state();
-    let ds = std::sync::Arc::clone(&state.params.dataset);
+    let ds = std::sync::Arc::clone(&state.params.datasets[0]);
     let (b1, round1) = demo::mine_plain(&state, vec![]);
     state.connect_block(&b1).unwrap();
     let mut work = Work::new();
@@ -342,11 +343,11 @@ fn reported_shares_are_checked_kept_and_listed_by_the_next_job() {
     assert!(good.len() >= 5 && !bad.is_empty());
     // A reported nonce is the record of the reference header, kept for its parent (the tip at the time of the job).
     let rec = |nonce: u32| ShareRecord { body_root: base.body_root, time: base.time, nonce };
-    assert!(work.add_share(id, bad[0], &*ds, true).is_err(), "above the share target");
-    assert!(work.add_share(999, good[0], &*ds, true).is_err(), "unknown job");
-    assert_eq!(work.add_share(id, good[3], &*ds, true), Ok(Some((base.parent, rec(good[3])))));
-    assert_eq!(work.add_share(id, good[0], &*ds, true), Ok(Some((base.parent, rec(good[0])))));
-    assert_eq!(work.add_share(id, good[3], &*ds, true), Ok(None), "a duplicate");
+    assert!(work.add_share(id, bad[0], true).is_err(), "above the share target");
+    assert!(work.add_share(999, good[0], true).is_err(), "unknown job");
+    assert_eq!(work.add_share(id, good[3], true), Ok(Some((base.parent, rec(good[3])))));
+    assert_eq!(work.add_share(id, good[0], true), Ok(Some((base.parent, rec(good[0])))));
+    assert_eq!(work.add_share(id, good[3], true), Ok(None), "a duplicate");
     assert!(work.has_record(&base.parent, &rec(good[3])) && !work.has_record(&base.parent, &rec(bad[0])));
 
     // The winner is mined on the reference header, so the next job lists the
@@ -361,7 +362,7 @@ fn reported_shares_are_checked_kept_and_listed_by_the_next_job() {
             ))
         })
         .unwrap();
-    work.add_share(id, winner, &*ds, true).expect("the winner meets the share target");
+    work.add_share(id, winner, true).expect("the winner meets the share target");
     let block = work.submit(id, &vec![0u8; job.extranonce_size as usize], job.time_start, winner).unwrap();
     assert_eq!(block.header, neb_block::Header { nonce: winner, ..base });
     state.connect_block(&block).expect("the block connects");
@@ -381,7 +382,7 @@ fn reported_shares_are_checked_kept_and_listed_by_the_next_job() {
 #[test]
 fn records_of_other_miners_are_kept_by_parent_listed_and_bounded() {
     let mut state = demo_easy_state();
-    let ds = std::sync::Arc::clone(&state.params.dataset);
+    let ds = std::sync::Arc::clone(&state.params.datasets[0]);
     let (b1, round1) = demo::mine_plain(&state, vec![]);
     state.connect_block(&b1).unwrap();
     let (b2, _) = demo::mine_plain(&state, round1);

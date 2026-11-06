@@ -185,15 +185,8 @@ fn the_gpu_worker_mines_blocks_that_the_node_accepts_with_every_kernel() {
                             CudaScanner::open(d, &px, &lab, &w1, &w2, 256, 32).map(|s| Box::new(s) as Box<dyn Scanner>)
                         }) as neb_gpuminer::Fallback
                     });
-                    vec![spawn_worker_with_fallback(
-                        session.clone(),
-                        dataset,
-                        Box::new(scanner),
-                        fallback,
-                        attempts,
-                        mismatches,
-                        fallbacks,
-                    )]
+                    let lane = neb_gpuminer::Lane { dataset, scanner: Box::new(scanner), fallback };
+                    vec![spawn_worker_with_fallback(session.clone(), vec![lane], attempts, mismatches, fallbacks)]
                 })
                 .expect("miner")
             };

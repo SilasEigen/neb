@@ -72,7 +72,7 @@ fn mine_and_check(kind: EngineKind) -> Arc<Engine> {
 
     let engine = Engine::new(kind, Arc::new(SyntheticDataset::new()));
     assert_eq!(engine.active(), kind, "{:?}", engine.messages());
-    let miner = neb_cpuminer::start_with_engine(work.addr, engine.clone(), 2, "test-miner").expect("miner");
+    let miner = neb_cpuminer::start_with_engine(work.addr, vec![engine.clone()], 2, "test-miner").expect("miner");
     assert!(wait_for(|| node.height() >= 8, 120), "the chain stopped at height {}", node.height());
     let stats = miner.stats().clone();
     assert!(wait_for(|| stats.accepted.load(Ordering::Relaxed) >= 6, 20));

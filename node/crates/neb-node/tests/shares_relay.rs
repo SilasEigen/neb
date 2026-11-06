@@ -64,7 +64,7 @@ fn wait_for<F: FnMut() -> bool>(mut f: F, seconds: u64) -> bool {
 fn work_of(node: &Node, id: u64) -> (Model, Job) {
     let frames = node.work_frames(id).expect("the frames of the job");
     let FrameOut::Message { payload, consumed, .. } = parse_frame(&frames).unwrap() else { panic!("model frame") };
-    let model = decode_model(payload).unwrap();
+    let model = decode_model(payload).unwrap().1;
     let FrameOut::Message { payload, .. } = parse_frame(&frames[consumed..]).unwrap() else { panic!("job frame") };
     (model, Job::decode(payload).unwrap())
 }
@@ -107,7 +107,7 @@ fn the_block_of_one_node_lists_the_shares_that_the_miner_of_another_node_found()
         wait_for(|| a.peer_info().iter().any(|p| p.handshake) && b.peer_info().iter().any(|p| p.handshake), 15),
         "no handshake"
     );
-    let ds = a.network().chain.dataset.clone();
+    let ds = a.network().chain.datasets[0].clone();
     let start = a.tip_model().hashes();
 
     // Two miners on the tip (the genesis block), with two coinbases.
@@ -186,7 +186,7 @@ fn a_peer_that_relays_a_record_above_the_share_target_is_banned() {
         wait_for(|| a.peer_info().iter().any(|p| p.handshake) && b.peer_info().iter().any(|p| p.handshake), 15),
         "no handshake"
     );
-    let ds = a.network().chain.dataset.clone();
+    let ds = a.network().chain.datasets[0].clone();
 
     let jb = b.make_job([0x42; 32], T0 + 60).unwrap();
     let (model, job) = work_of(&b, jb);

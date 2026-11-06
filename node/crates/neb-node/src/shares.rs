@@ -21,7 +21,7 @@ impl Node {
         let new = {
             let mut inner = self.inner.lock().expect("node lock");
             let NodeInner { state, work, .. } = &mut *inner;
-            work.add_share(id, nonce, &*state.params.dataset, state.verify_pow)?
+            work.add_share(id, nonce, state.verify_pow)?
         };
         match new {
             Some((parent, record)) => {
@@ -49,14 +49,14 @@ impl Node {
     ) -> Result<usize, NodeError> {
         let (model, bits, target, dataset, fresh) = {
             let inner = self.inner.lock().expect("node lock");
-            let Some((model, bits, target)) = inner.state.share_round(&parent) else {
+            let Some((model, dataset, bits, target)) = inner.state.share_round(&parent) else {
                 return Ok(0);
             };
             let mut fresh: Vec<ShareRecord> =
                 records.iter().filter(|r| !inner.work.has_record(&parent, r)).copied().collect();
             fresh.sort_unstable();
             fresh.dedup();
-            (model, bits, target, inner.state.params.dataset.clone(), fresh)
+            (model, bits, target, dataset, fresh)
         };
         if fresh.is_empty() {
             return Ok(0);

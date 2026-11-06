@@ -33,7 +33,10 @@ mod tests;
 mod tests_shares;
 
 pub use block::{Block, ShareRecord};
-pub use model::{MODEL_DEPTH, ProofError, SHARE_RATIO_LOG2, share_key, share_target, verify_block};
+pub use model::{
+    MODEL_DEPTH, Models, ProofError, SHARE_RATIO_LOG2, initial_models, models_hash, share_key, share_target, slot,
+    verify_block,
+};
 pub use state::{ChainError, ChainParams, ChainState, OutPoint, Utxo};
 pub use tx::{COIN, Transaction, TxIn, TxOut};
 pub use work::Work;

@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use neb_cpuminer::dashboard::{self, Hardware, Info, Outcome};
 use neb_engines::{Engine, EngineKind};
-use neb_pow::shares::{FileDataset, SharedDataset, SyntheticDataset};
+use neb_pow::shares::{SharedDataset, SyntheticDataset, load_datasets};
 
 fn usage() -> i32 {
     eprintln!(
@@ -79,10 +79,11 @@ fn run(args: &[String]) -> i32 {
     if node.is_none() && !selftest {
         return usage();
     }
-    let dataset: SharedDataset = match (synthetic, dataset_path) {
-        (true, _) => Arc::new(SyntheticDataset::new()),
-        (false, Some(path)) => match FileDataset::load(std::path::Path::new(&path), None) {
-            Ok(d) => Arc::new(d),
+    // One dataset per model slot, in slot order (a dataset set file, or a single dataset).
+    let datasets: Vec<SharedDataset> = match (synthetic, dataset_path) {
+        (true, _) => vec![Arc::new(SyntheticDataset::new())],
+        (false, Some(path)) => match load_datasets(std::path::Path::new(&path), None) {
+            Ok(d) => d,
             Err(e) => {
                 eprintln!("cannot load the dataset: {e}");
                 return 1;
@@ -90,12 +91,13 @@ fn run(args: &[String]) -> i32 {
         },
         (false, None) => return usage(),
     };
-    let engine = Engine::new(engine_kind, dataset);
-    for message in engine.messages() {
+    let engines: Vec<Arc<Engine>> = datasets.into_iter().map(|d| Engine::new(engine_kind, d)).collect();
+    let engine = engines[0].clone();
+    for message in engines.iter().flat_map(|e| e.messages()) {
         eprintln!("neb-miner-cpu: {message}");
     }
     if selftest {
-        let ok = engine.active() == engine_kind;
+        let ok = engines.iter().all(|e| e.active() == engine_kind);
         println!(
             "engine {}: {}",
             engine_kind.name(),
@@ -107,7 +109,7 @@ fn run(args: &[String]) -> i32 {
     let engine_name = engine.active().name();
     let miner = match neb_cpuminer::start_with_engine(
         node.as_str(),
-        engine.clone(),
+        engines,
         threads,
         concat!("neb-miner-cpu ", env!("CARGO_PKG_VERSION")),
     ) {

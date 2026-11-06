@@ -58,7 +58,7 @@ fn mine_chain(state: &mut ChainState, count: u32) -> Vec<Block> {
 /// parent of block k - 1, with its bits; they are evaluated on the model of
 /// block k - 2 and their summed gradients update the model of block k - 1.
 fn replay_models(state: &ChainState, blocks: &[Block]) -> Vec<Model> {
-    let ds = &*state.params.dataset;
+    let ds = &*state.params.datasets[0];
     let mut models = vec![Model::from_seed(&state.chain_id)];
     let mut headers = vec![demo::easy_genesis(T0).header];
     for block in blocks {
@@ -217,7 +217,7 @@ fn split_records(
     let target = share_target(tip.bits).unwrap();
     let mut buffers = ShareBuffers::new();
     let (mut good, mut bad): (Vec<_>, Vec<_>) = (0..limit).map(|n| rec(body, time, n)).partition(|r| {
-        target.admits(&buffers.ticket(model, &*state.params.dataset, &share_key(r, tip.parent, tip.bits)))
+        target.admits(&buffers.ticket(model, &*state.params.datasets[0], &share_key(r, tip.parent, tip.bits)))
     });
     good.sort();
     bad.sort();
@@ -266,7 +266,7 @@ fn shares_that_break_a_rule_are_rejected() {
     weak.header.nonce = (0u32..)
         .find(|&n| {
             weak.header.nonce = n;
-            !block_target.admits(&buffers.ticket(&model_p, &*state.params.dataset, &weak.id()))
+            !block_target.admits(&buffers.ticket(&model_p, &*state.params.datasets[0], &weak.id()))
         })
         .unwrap();
     assert!(matches!(state.connect_block(&weak), Err(ChainError::Proof(ProofError::BadPow))));
@@ -449,8 +449,8 @@ fn a_reorganisation_lands_on_the_model_of_a_full_replay() {
     for b in &main {
         old.connect_block(b).unwrap();
     }
-    assert_eq!(removed[0].1.hashes(), old.tip_model().hashes());
-    assert_eq!(removed[2].1.hashes(), old.model_at(5).unwrap().hashes());
+    assert_eq!(removed[0].1[0].hashes(), old.tip_model().hashes());
+    assert_eq!(removed[2].1[0].hashes(), old.model_at(5).unwrap().hashes());
 }
 
 // An invalid block in the branch leaves the former best chain, UTXO set and model intact.
@@ -467,7 +467,7 @@ fn a_failed_reorganisation_restores_the_chain_and_its_model() {
     let model = probe.model_at(5).unwrap();
     let target = neb_block::Target::from_bits(branch[2].header.bits).unwrap();
     let mut buffers = ShareBuffers::new();
-    let ds = Arc::clone(&state.params.dataset);
+    let ds = Arc::clone(&state.params.datasets[0]);
     branch[2].header.nonce = (0u32..)
         .find(|&n| {
             branch[2].header.nonce = n;
@@ -490,7 +490,7 @@ fn the_model_classifies_better_after_24_blocks_of_shares() {
     let blocks = mine_chain(&mut state, 25);
     let shares: usize = blocks.iter().map(|b| b.shares.len()).sum();
     assert!(shares >= 24 * 8, "{shares} shares in 25 blocks");
-    let ds = Arc::clone(&state.params.dataset);
+    let ds = Arc::clone(&state.params.datasets[0]);
     let (before, after) = (correct(&initial, &*ds), correct(&state.tip_model(), &*ds));
     assert!(after > before + 200, "{before} of {} before, {after} after", ds.n());
 }

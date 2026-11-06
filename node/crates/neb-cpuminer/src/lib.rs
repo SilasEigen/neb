@@ -101,6 +101,8 @@ pub struct Unit {
     installed: Instant,
     /// The model prepared for the engine, made by the first worker that needs it.
     prepared: OnceLock<Arc<Prepared>>,
+    /// The slot of the model (spec/shares.md section 11.5): the dataset the attempts use.
+    pub slot: u8,
 }
 
 impl Unit {
@@ -240,22 +242,29 @@ impl MinerHandle {
 /// Connects to the work service, sends the hello frame, and starts the reader
 /// and `threads` CPU workers (at least one). The miner stops when the
 /// connection closes or on a malformed frame; see `MinerHandle::stopped`.
-pub fn start(node: impl ToSocketAddrs, dataset: SharedDataset, threads: usize, name: &str) -> io::Result<MinerHandle> {
-    start_with_engine(node, Engine::reference(dataset), threads, name)
-}
-
-/// As [`start`], with the attempts evaluated by `engine` (see [`Engine::new`]).
-pub fn start_with_engine(
+/// `datasets` are the datasets of the network in slot order (one for a network of one model).
+pub fn start(
     node: impl ToSocketAddrs,
-    engine: Arc<Engine>,
+    datasets: Vec<SharedDataset>,
     threads: usize,
     name: &str,
 ) -> io::Result<MinerHandle> {
+    start_with_engine(node, datasets.into_iter().map(Engine::reference).collect(), threads, name)
+}
+
+/// As [`start`], with the attempts of slot `i` evaluated by `engines[i]` (see [`Engine::new`]).
+pub fn start_with_engine(
+    node: impl ToSocketAddrs,
+    engines: Vec<Arc<Engine>>,
+    threads: usize,
+    name: &str,
+) -> io::Result<MinerHandle> {
+    let engines: Arc<[Arc<Engine>]> = engines.into();
     start_with(node, name, |session| {
         (0..threads.max(1))
             .map(|_| {
-                let (session, engine) = (session.clone(), engine.clone());
-                thread::spawn(move || work(&session, &engine))
+                let (session, engines) = (session.clone(), engines.clone());
+                thread::spawn(move || work(&session, &engines))
             })
             .collect()
     })
@@ -304,7 +313,7 @@ fn frame_hello(name: &str) -> Vec<u8> {
 fn read_frames(mut stream: TcpStream, shared: &Shared) {
     let mut buf: Vec<u8> = Vec::new();
     let mut tmp = [0u8; 65536];
-    let mut model: Option<Arc<Model>> = None;
+    let mut model: Option<(u8, Arc<Model>)> = None;
     loop {
         match stream.read(&mut tmp) {
             Ok(0) | Err(_) => return,
@@ -316,12 +325,12 @@ fn read_frames(mut stream: TcpStream, shared: &Shared) {
                 Ok(FrameOut::Message { msg_type, payload, consumed }) => {
                     match msg_type {
                         MSG_MODEL => match frames::decode_model(payload) {
-                            Ok(m) => model = Some(Arc::new(m)),
+                            Ok((slot, m)) => model = Some((slot, Arc::new(m))),
                             Err(_) => return,
                         },
                         MSG_JOB => {
-                            let (Ok(job), Some(model)) = (Job::decode(payload), model.clone()) else { return };
-                            install(shared, job, model);
+                            let (Ok(job), Some((slot, model))) = (Job::decode(payload), model.clone()) else { return };
+                            install(shared, job, slot, model);
                         }
                         MSG_RESULT => {
                             if let Ok(result) = ResultMsg::decode(payload) {
@@ -354,7 +363,7 @@ fn answer_latest(shared: &Shared, accepted: bool) {
 }
 
 /// Makes `job` current. Workers notice the new generation between attempts.
-fn install(shared: &Shared, job: Job, model: Arc<Model>) {
+fn install(shared: &Shared, job: Job, slot: u8, model: Arc<Model>) {
     let extranonce = vec![0u8; job.extranonce_size as usize];
     let header = job.header(&extranonce, job.time_start, 0).encode();
     let generation = shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
@@ -372,6 +381,7 @@ fn install(shared: &Shared, job: Job, model: Arc<Model>) {
         found: AtomicBool::new(false),
         installed: Instant::now(),
         prepared: OnceLock::new(),
+        slot,
     };
     *shared.current.lock().expect("current job") = Some(Arc::new(unit));
     shared.stats.jobs.fetch_add(1, Ordering::Relaxed);
@@ -383,8 +393,8 @@ fn send(shared: &Shared, frame: &[u8]) {
 
 /// CPU worker loop. The job is shared; each worker owns its scratch buffers. The engine decides every hit with the
 /// reference (see [`neb_engines::Worker::attempt`]).
-fn work(session: &Session, engine: &Arc<Engine>) {
-    let mut worker = engine.worker();
+fn work(session: &Session, engines: &[Arc<Engine>]) {
+    let mut workers: Vec<_> = engines.iter().map(|e| e.worker()).collect();
     while !session.stopped() {
         let Some(unit) = session.current() else {
             thread::sleep(Duration::from_millis(20));
@@ -392,6 +402,11 @@ fn work(session: &Session, engine: &Arc<Engine>) {
         };
         let Some((start, len)) = unit.take_nonces(CHUNK as u32) else {
             thread::sleep(Duration::from_millis(20));
+            continue;
+        };
+        // A slot this miner has no dataset for cannot be mined: wait for the next job.
+        let Some((engine, worker)) = engines.get(unit.slot as usize).zip(workers.get_mut(unit.slot as usize)) else {
+            thread::sleep(Duration::from_millis(200));
             continue;
         };
         let prepared = unit.prepared(engine).clone();

@@ -600,74 +600,6 @@ impl Dataset for SyntheticDataset {
     }
 }
 
-/// A dataset stored in a file (spec/shares.md section 11.6): the magic `NMD1`,
-/// the sample count `N >= 1` as a little-endian u32, then `N` records of `NIN`
-/// pixels (0..=7) and a label (0..=9). The network parameters pin the BLAKE3
-/// hash of the file.
-pub struct FileDataset {
-    n: u32,
-    records: Vec<u8>,
-}
-
-/// Bytes of one record of a dataset file.
-pub const RECORD_BYTES: usize = NIN + 1;
-const FILE_MAGIC: &[u8; 4] = b"NMD1";
-
-impl FileDataset {
-    /// Checks the format only, not the hash (see [`FileDataset::load`]): magic,
-    /// `N >= 1`, an exact size of `8 + 785 * N` bytes, then every pixel and
-    /// label.
-    pub fn from_bytes(bytes: &[u8]) -> Result<FileDataset, String> {
-        if bytes.len() < 8 || &bytes[..4] != FILE_MAGIC {
-            return Err("not a dataset file (bad magic)".into());
-        }
-        let n = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-        let records = &bytes[8..];
-        if n == 0 || records.len() != n as usize * RECORD_BYTES {
-            return Err(format!(
-                "the file has {} record bytes, {n} samples need {}",
-                records.len(),
-                n as usize * RECORD_BYTES
-            ));
-        }
-        if records.chunks(RECORD_BYTES).any(|r| r[..NIN].iter().any(|&p| p > 7) || r[NIN] > 9) {
-            return Err("a sample has a pixel above 7 or a label above 9".into());
-        }
-        Ok(FileDataset { n, records: records.to_vec() })
-    }
-
-    /// Reads a dataset file. When `pinned` is set, the BLAKE3 hash of the file
-    /// must equal it; the hash is checked before the content is interpreted.
-    pub fn load(path: &std::path::Path, pinned: Option<&[u8; 32]>) -> Result<FileDataset, String> {
-        let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        if let Some(want) = pinned {
-            let got = blake3::hash(&bytes);
-            if got.as_bytes() != want {
-                return Err(format!("{} has the wrong hash {}", path.display(), got.to_hex()));
-            }
-        }
-        FileDataset::from_bytes(&bytes)
-    }
-}
-
-impl std::fmt::Debug for FileDataset {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "FileDataset({} samples)", self.n)
-    }
-}
-
-impl Dataset for FileDataset {
-    fn n(&self) -> u32 {
-        self.n
-    }
-
-    /// Panics when `index >= n()`, which a share never requests.
-    fn get(&self, index: u32) -> ([u8; NIN], u8) {
-        let r = &self.records[index as usize * RECORD_BYTES..][..RECORD_BYTES];
-        (r[..NIN].try_into().unwrap(), r[NIN])
-    }
-}
-
 /// The key of share `j` of step `s` in the test vectors (spec/shares.md section 10):
 /// `BLAKE3("neb-test-share" || LE32(s) || LE32(j))`.
 fn test_share_key(s: u32, j: u32) -> [u8; 32] {
@@ -757,6 +689,9 @@ pub fn replay_vectors(text: &str) -> Result<(usize, usize), String> {
     }
     Ok((steps, shares))
 }
+
+mod file;
+pub use file::{FileDataset, MAX_DATASETS, RECORD_BYTES, datasets_from_bytes, load_datasets};
 
 #[cfg(test)]
 mod tests;

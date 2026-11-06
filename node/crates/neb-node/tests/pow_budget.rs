@@ -166,7 +166,11 @@ fn a_peer_that_sends_a_block_with_an_invalid_share_is_banned() {
         let bad = (0u32..)
             .map(|nonce| ShareRecord { body_root: [0xAB; 32], time: tip.time, nonce })
             .find(|r| {
-                !target.admits(&buffers.ticket(&model_pp, &*probe.params.dataset, &share_key(r, tip.parent, tip.bits)))
+                !target.admits(&buffers.ticket(
+                    &model_pp,
+                    &*probe.params.datasets[0],
+                    &share_key(r, tip.parent, tip.bits),
+                ))
             })
             .unwrap();
         vec![bad]
@@ -198,7 +202,11 @@ fn the_session_pays_one_token_for_the_block_and_one_for_each_share() {
         let mut two: Vec<ShareRecord> = (0u32..)
             .map(|nonce| ShareRecord { body_root: [0xAB; 32], time: tip.time, nonce })
             .filter(|r| {
-                target.admits(&buffers.ticket(&model_pp, &*probe.params.dataset, &share_key(r, tip.parent, tip.bits)))
+                target.admits(&buffers.ticket(
+                    &model_pp,
+                    &*probe.params.datasets[0],
+                    &share_key(r, tip.parent, tip.bits),
+                ))
             })
             .take(2)
             .collect();

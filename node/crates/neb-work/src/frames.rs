@@ -55,7 +55,7 @@ impl std::error::Error for FrameError {}
 
 /// Builds `length || type || payload` with `length = 1 + payload.len()`. The
 /// caller keeps the payload below `MAX_FRAME`; the largest frame sent is the
-/// model frame (1 + 32 + 50816 bytes).
+/// model frame (1 + 1 + 32 + 50816 bytes).
 pub fn frame(msg_type: u8, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(5 + payload.len());
     out.extend_from_slice(&((payload.len() + 1) as u32).to_le_bytes());
@@ -393,27 +393,29 @@ impl ShareMsg {
     }
 }
 
-/// The model frame: `weights_hash (32) || packed weights (50 816 bytes)`
-/// (spec/shares.md section 11.5): the 4-bit weights of both layers, packed.
-/// The node sends it before every job. Residuals are not sent.
-pub fn model_frame(model: &Model) -> Vec<u8> {
-    let mut out = Vec::with_capacity(32 + PACKED_WEIGHTS);
+/// The model frame: `slot (1) || weights_hash (32) || packed weights (50 816 bytes)`
+/// (spec/shares.md section 11.5): the slot of the model, which names the dataset the
+/// attempts use, then the 4-bit weights of both layers, packed. The node sends it
+/// before every job. Residuals are not sent.
+pub fn model_frame(slot: u8, model: &Model) -> Vec<u8> {
+    let mut out = Vec::with_capacity(1 + 32 + PACKED_WEIGHTS);
+    out.push(slot);
     out.extend_from_slice(&model.weights_hash());
     out.extend_from_slice(&model.packed_weights());
     frame(MSG_MODEL, &out)
 }
 
-/// The weights of a model frame payload, as a model with zero residuals. Fails when
-/// the size is wrong or the weights do not hash to the announced
+/// The slot and the weights of a model frame payload, as a model with zero residuals.
+/// Fails when the size is wrong or the weights do not hash to the announced
 /// `weights_hash`. The node is trusted, so the hash detects a damaged or
 /// truncated frame, not a forged one.
-pub fn decode_model(p: &[u8]) -> Result<Model, FrameError> {
-    if p.len() != 32 + PACKED_WEIGHTS {
+pub fn decode_model(p: &[u8]) -> Result<(u8, Model), FrameError> {
+    if p.len() != 1 + 32 + PACKED_WEIGHTS {
         return Err(FrameError::BadShape("model frame has the wrong size".into()));
     }
-    let model = Model::from_packed_weights(&p[32..]).map_err(FrameError::BadShape)?;
-    if model.weights_hash() != p[..32] {
+    let model = Model::from_packed_weights(&p[33..]).map_err(FrameError::BadShape)?;
+    if model.weights_hash() != p[1..33] {
         return Err(FrameError::BadShape("weights do not match their hash".into()));
     }
-    Ok(model)
+    Ok((p[0], model))
 }

@@ -11,7 +11,9 @@ the grandparent is not above the share target; a share is a record of 40 bytes, 
 parent of the previous block, spec/shares.md section 11.2), the model step, the weights and residual hashes, and the losses of
 the step recomputed entry by entry (cut residual, clipped weight). A mismatch prints `ORACLE FAILED` with the
 block and exits 1. `--dataset FILE` gives the sample file of a fixture that was recorded on a file dataset; its
-BLAKE3 hash must be the one the fixture names.
+BLAKE3 hash must be the one the fixture names. A fixture with a `slots K` line is a chain of K models
+(spec/shares.md section 11.2): the file is then a set of K datasets (`NMDS`), block `h` is mined on the model of
+slot `h mod K`, its shares update the model of slot `(h - 1) mod K`, and its hashes are those of that model.
 """
 import importlib.util
 import os
@@ -48,11 +50,15 @@ def parse(path):
     if lines[0] != "neb-chain-fixture 2":
         raise Failed("not a neb-chain-fixture 2 file")
     meta = {}
-    for l in lines[1:4]:
-        k, v = l.split(" ", 1)
+    at = 1
+    while at < len(lines) and not lines[at].startswith("block "):
+        k, v = lines[at].split(" ", 1)
         meta[k] = v
+        at += 1
+    if "name" not in meta or "dataset" not in meta or "seed" not in meta:
+        raise Failed("the fixture needs name, dataset and seed lines")
     blocks = []
-    for l in lines[4:]:
+    for l in lines[at:]:
         f = l.split(" ")
         if len(f) not in (12, 21) or f[0] != "block" or f[2] != "pool" or f[4] != "header" or f[6] != "list" or f[8] != "wh" or f[10] != "rh":
             raise Failed("malformed block line: " + l[:80])
@@ -95,17 +101,19 @@ def stand_in_body_root(height, pool, lst):
 
 class Samples:
     """pixels (n x 784) and labels of the dataset, as int64 rows"""
-    def __init__(self, kind, path):
+    def __init__(self, kind, path, raw=None):
         if kind == "synthetic":
             ds = O.TestDataset()
             self.n = ds.n
             self.px = np.stack([ds.sample(i)[0] for i in range(ds.n)]).astype(np.int64)
             self.lab = np.array([ds.sample(i)[1] for i in range(ds.n)])
         else:
-            raw = np.fromfile(path, dtype=np.uint8)
+            raw = np.fromfile(path, dtype=np.uint8) if raw is None else raw
             if raw[:4].tobytes() != b"NMD1":
                 raise Failed("bad dataset magic")
             self.n = int.from_bytes(raw[4:8].tobytes(), "little")
+            if raw.size != 8 + self.n * (O.NIN + 1):
+                raise Failed("the dataset has the wrong size")
             rec = raw[8:].reshape(self.n, O.NIN + 1)
             self.px = rec[:, :O.NIN].astype(np.int64)
             self.lab = rec[:, O.NIN].astype(np.int64)
@@ -151,19 +159,50 @@ def losses(model, gs1, gs2, after):
     return tuple(out)
 
 
+def dataset_set(raw):
+    """the datasets of a file, one per slot (spec/shares.md section 11.6): an NMD1 file, or NMDS || LE32(K) || K files"""
+    if raw[:4].tobytes() != b"NMDS":
+        return [Samples("file", None, raw)]
+    k, at, out = int.from_bytes(raw[4:8].tobytes(), "little"), 8, []
+    if not 1 <= k <= 16:
+        raise Failed("a dataset set holds 1 to 16 datasets")
+    for _ in range(k):
+        n = int.from_bytes(raw[at + 4:at + 8].tobytes(), "little")
+        end = at + 8 + n * (O.NIN + 1)
+        if end > raw.size:
+            raise Failed("a dataset of the set is cut short")
+        out.append(Samples("file", None, raw[at:end]))
+        at = end
+    if at != raw.size:
+        raise Failed("bytes after the last dataset of the set")
+    return out
+
+
+def initial_models(seed, k):
+    """the state of the genesis for k slots (spec/shares.md section 11.2)"""
+    if k == 1:
+        return [O.init_state(seed)]
+    return [O.init_state(O.blake3(b"neb-model-slot" + seed + le32(i))) for i in range(k)]
+
+
 def replay(path, dataset_path=None):
     meta, seed, blocks = parse(path)
+    n_slots = int(meta.get("slots", "1"))
     kind = "synthetic" if meta["dataset"] == "synthetic" else "file"
     if kind == "file":
         if dataset_path is None:
             raise Failed("the fixture needs --dataset FILE (%s)" % meta["dataset"])
         want = meta["dataset"].split(" ")[1]
-        got = O.blake3(open(dataset_path, "rb").read()).hex()
+        raw = open(dataset_path, "rb").read()
+        got = O.blake3(raw).hex()
         if got != want:
             raise Failed("the dataset file has the wrong BLAKE3 hash %s" % got)
-    samples = Samples(kind, dataset_path)
-    w1, w2, r1, r2 = O.init_state(seed)
-    models = [(w1, w2, r1, r2)]
+        datasets = dataset_set(np.frombuffer(raw, dtype=np.uint8))
+    else:
+        datasets = [Samples("synthetic", None)] * n_slots
+    if len(datasets) != n_slots:
+        raise Failed("the fixture has %d slots and the dataset file %d datasets" % (n_slots, len(datasets)))
+    models = [initial_models(seed, n_slots)]
     prev_id, prev = seed, None
     steps = shares = largest = 0
     total = [[0, 0, 0, 0], [0, 0, 0, 0]]
@@ -182,10 +221,12 @@ def replay(path, dataset_path=None):
             raise Failed("%s: the list has more than 256 records or is not strictly increasing (as byte strings)" % tag)
         if h == 1 and lst:
             raise Failed("%s: the block of height 1 lists no share" % tag)
-        model_p = models[h - 1]
-        model_pp = models[h - 2] if h >= 2 else model_p
+        state_p = models[h - 1]
+        state_pp = models[h - 2] if h >= 2 else state_p
+        slot_b, slot_s = h % n_slots, (h - 1) % n_slots
+        model_p, model_pp = state_p[slot_s], state_pp[slot_s]
         key = O.blake3(b["header"])
-        tk, _, _ = evaluate(model_p, samples, [key], False)
+        tk, _, _ = evaluate(state_p[slot_b], datasets[slot_b], [key], False)
         if tk[0] > target_of(f["bits"]):
             raise Failed("%s: the proof of work does not meet the target" % tag)
         if lst:
@@ -193,7 +234,7 @@ def replay(path, dataset_path=None):
             # the share header of a record: version 1, the parent of the previous block (the round), the body root, time
             # and nonce of the record, and the bits of the previous block
             keys = [O.blake3(le32(1) + pf["parent"] + r[:32] + r[32:36] + le32(pf["bits"]) + r[36:40]) for r in lst]
-            tks, gs1, gs2 = evaluate(model_pp, samples, keys, True)
+            tks, gs1, gs2 = evaluate(model_pp, datasets[slot_s], keys, True)
             st = share_target_of(pf["bits"])
             for r, t in zip(lst, tks):
                 if t > st:
@@ -214,7 +255,9 @@ def replay(path, dataset_path=None):
         if (wh, rh) != (b["wh"], b["rh"]):
             raise Failed("%s: the state hashes differ from the fixture" % tag)
         prev_id, prev = O.blake3(b["header"]), b["header"]
-        models.append(tuple(new))
+        state = list(state_p)
+        state[slot_s] = tuple(new)
+        models.append(state)
     return {"name": meta["name"], "blocks": len(blocks), "steps": steps, "shares": shares, "largest_step": largest, "total": total,
             "final": (blocks[-1]["wh"], blocks[-1]["rh"])}
 

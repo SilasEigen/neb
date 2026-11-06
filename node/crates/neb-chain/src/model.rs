@@ -1,11 +1,12 @@
 //! Proof of work and model step of a block (spec/shares.md section 11).
 //!
-//! The ticket of a block is an attempt on the model of its parent. The shares
-//! it lists belong to the round of its parent and are computed on the model of
-//! the grandparent; their summed gradients update the model of the parent, so
-//! a share trains the model one block after it was found. Everything here is
-//! integer arithmetic done by `neb_pow` (the C reference), and every node
-//! must obtain the same model.
+//! A chain trains K models, one per dataset of the network (K = 1 on a network of one dataset). The state of a block
+//! is the list of the K models; a block of height `h` works on the model of slot `h mod K`. The ticket of a block is
+//! an attempt on that model of its parent's state. The shares it lists belong to the round of its parent (height
+//! `h - 1`, slot `(h - 1) mod K`) and are computed on that slot's model in the grandparent's state; their summed
+//! gradients update that slot's model in the parent's state, so a share trains the model it was mined on. With K = 1
+//! this is the rule of protocol 2. Everything here is integer arithmetic done by `neb_pow` (the C reference), and
+//! every node must obtain the same models.
 
 use std::sync::Arc;
 
@@ -14,6 +15,47 @@ use neb_pow::shares::{Dataset, GradSum, Model, ShareBuffers};
 
 use crate::block::{Block, ShareRecord, check_shares_list};
 use crate::state::ChainParams;
+
+/// The state of a block: one model per slot (spec/shares.md section 11.2). A model that a block does not update is
+/// shared with the parent's state.
+pub type Models = Arc<[Arc<Model>]>;
+
+/// The slot a block of height `height` works on: `height mod k`.
+pub fn slot(height: u32, k: usize) -> usize {
+    height as usize % k
+}
+
+/// The hash of a state (spec/shares.md section 7): with one slot the weights hash of its model, as in protocol 2;
+/// with more, `BLAKE3("neb-models" || weights_hash_0 || ... || weights_hash_{K-1})`.
+pub fn models_hash(models: &Models) -> [u8; 32] {
+    if models.len() == 1 {
+        return models[0].weights_hash();
+    }
+    let mut h = blake3::Hasher::new();
+    h.update(b"neb-models");
+    for m in models.iter() {
+        h.update(&m.weights_hash());
+    }
+    *h.finalize().as_bytes()
+}
+
+/// The state of the genesis block for `k` slots (spec/shares.md section 11.2): with one slot the model of the seed
+/// equal to the genesis id, as in protocol 2; with more, slot `i` has the seed
+/// `BLAKE3("neb-model-slot" || genesis id || LE32(i))`.
+pub fn initial_models(chain_id: &[u8; 32], k: usize) -> Models {
+    if k == 1 {
+        return Arc::from(vec![Arc::new(Model::from_seed(chain_id))]);
+    }
+    (0..k as u32)
+        .map(|i| {
+            let mut h = blake3::Hasher::new();
+            h.update(b"neb-model-slot");
+            h.update(chain_id);
+            h.update(&i.to_le_bytes());
+            Arc::new(Model::from_seed(h.finalize().as_bytes()))
+        })
+        .collect()
+}
 
 /// The share target is the block target times 2^5, so a round yields about 32
 /// shares (spec/shares.md section 11.2).
@@ -63,39 +105,47 @@ pub fn share_key(record: &ShareRecord, parent: [u8; 32], bits: u32) -> [u8; 32] 
 }
 
 /// Checks the proof of work of `block` (spec/shares.md section 11.1) and its
-/// share list, and returns the model of the block (section 11.2).
+/// share list, and returns the state of the block (section 11.2).
 ///
-/// `model_p` is the model of the parent `parent`; `model_pp` is the model of
-/// the grandparent, equal to `model_p` when the parent is the genesis block
-/// (`parent_is_genesis`, the block has height 1). Order: list shape, then the
-/// one ticket of the block, then one ticket per share (at most 256), so an
-/// invalid block is rejected as early and as cheaply as possible. With `check`
-/// false the targets are not compared (tests of the other rules); the
-/// gradients are still summed.
+/// `height` is the height of `block`; `models_p` is the state of the parent
+/// `parent`; `models_pp` is the state of the grandparent, equal to `models_p`
+/// when the parent is the genesis block (the block has height 1). Order: list
+/// shape, then the one ticket of the block, then one ticket per share (at most
+/// 256), so an invalid block is rejected as early and as cheaply as possible.
+/// With `check` false the targets are not compared (tests of the other rules);
+/// the gradients are still summed.
 pub fn verify_block(
     params: &ChainParams,
     check: bool,
     block: &Block,
     parent: &Header,
-    parent_is_genesis: bool,
-    model_p: &Arc<Model>,
-    model_pp: &Arc<Model>,
-) -> Result<Arc<Model>, ProofError> {
+    height: u32,
+    models_p: &Models,
+    models_pp: &Models,
+) -> Result<Models, ProofError> {
     check_shares_list(&block.shares).map_err(ProofError::Shape)?;
-    if parent_is_genesis && !block.shares.is_empty() {
+    if height <= 1 && !block.shares.is_empty() {
         return Err(ProofError::Shape("the block of height 1 lists no share"));
     }
-    let ds: &dyn Dataset = &*params.dataset;
-    // The key of the block is its id; its ticket uses the model of the parent.
+    let k = params.datasets.len();
+    if models_p.len() != k || models_pp.len() != k {
+        return Err(ProofError::Shape("the state does not have one model per dataset"));
+    }
+    // The key of the block is its id; its ticket uses the model of its slot in the state of the parent.
     if check {
+        let s = slot(height, k);
         let target = Target::from_bits(block.header.bits).map_err(|_| ProofError::Shape("bits"))?;
-        if !target.admits(&ShareBuffers::new().ticket(model_p, ds, &block.id())) {
+        if !target.admits(&ShareBuffers::new().ticket(&models_p[s], &*params.datasets[s], &block.id())) {
             return Err(ProofError::BadPow);
         }
     }
     if block.shares.is_empty() {
-        return Ok(model_p.clone());
+        return Ok(models_p.clone());
     }
+    // The shares were mined for the parent's height, on the model of the parent's slot.
+    let t = slot(height - 1, k);
+    let ds: &dyn Dataset = &*params.datasets[t];
+    let model_pp = &models_pp[t];
     // Shares belong to the round of the parent: headers whose parent is the
     // parent of `parent`, with its bits, evaluated on M(PP). The gradients are
     // summed in int32, so the order of the list does not matter.
@@ -107,8 +157,10 @@ pub fn verify_block(
             return Err(ProofError::BadShare(*record));
         }
     }
-    // The step applies to M(P), not M(PP): a delay of one block.
-    let mut next = (**model_p).clone();
+    // The step applies to the model of the parent's state, not the grandparent's.
+    let mut next = (*models_p[t]).clone();
     sum.apply(&mut next);
-    Ok(Arc::new(next))
+    let mut models: Vec<Arc<Model>> = models_p.to_vec();
+    models[t] = Arc::new(next);
+    Ok(models.into())
 }

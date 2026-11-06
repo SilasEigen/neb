@@ -237,7 +237,7 @@ fn work_selftest() -> i32 {
     let mut buffers = ShareBuffers::new();
     let nonce = (0u32..)
         .find(|&n| {
-            target.admits(&buffers.ticket(&attack, &*state.params.dataset, &job.header(&ex, job.time_start, n).id()))
+            target.admits(&buffers.ticket(&attack, &*template.dataset, &job.header(&ex, job.time_start, n).id()))
         })
         .expect("a nonce");
     let block = match work.submit(id, &ex, job.time_start, nonce) {
@@ -334,20 +334,23 @@ fn model_accuracy(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let initial = neb_pow::shares::Model::from_seed(&params::genesis_id());
-    let tip = node.tip_model();
-    let samples = samples.min(ds.n());
-    let right = |m: &neb_pow::shares::Model| {
-        (0..samples)
-            .filter(|&i| {
-                let (x, label) = ds.get(i);
-                m.predict(&x) == label
-            })
-            .count()
-    };
-    println!("height {}  weights {}", node.height(), hex(&node.weights_hash()));
-    println!("initial model: {} of {samples} correct", right(&initial));
-    println!("chain model  : {} of {samples} correct", right(&tip));
+    let initial = neb_chain::initial_models(&params::genesis_id(), ds.len());
+    let tip = node.tip_models();
+    println!("height {}  models {}", node.height(), hex(&node.weights_hash()));
+    for (slot, d) in ds.iter().enumerate() {
+        let n = samples.min(d.n());
+        let right = |m: &neb_pow::shares::Model| {
+            (0..n)
+                .filter(|&i| {
+                    let (x, label) = d.get(i);
+                    m.predict(&x) == label
+                })
+                .count()
+        };
+        let name = params::DATASET_NAMES.get(slot).copied().unwrap_or("?");
+        println!("slot {slot} ({name}): initial model {} of {n} correct", right(&initial[slot]));
+        println!("slot {slot} ({name}): chain model   {} of {n} correct", right(&tip[slot]));
+    }
     0
 }
 

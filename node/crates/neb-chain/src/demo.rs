@@ -25,7 +25,7 @@ pub fn demo_params(anchor_time: u32, project_lock: [u8; 32]) -> ChainParams {
             anchor_time,
         },
         project_share_lock: project_lock,
-        dataset: Arc::new(SyntheticDataset::new()),
+        datasets: vec![Arc::new(SyntheticDataset::new())],
     }
 }
 
@@ -49,7 +49,7 @@ pub fn easy_params(anchor_time: u32, project_lock: [u8; 32]) -> ChainParams {
             anchor_time,
         },
         project_share_lock: project_lock,
-        dataset: Arc::new(SyntheticDataset::new()),
+        datasets: vec![Arc::new(SyntheticDataset::new())],
     }
 }
 
@@ -75,7 +75,7 @@ pub fn mine_next(state: &ChainState, txs: Vec<Transaction>, shares: Vec<ShareRec
     for nonce in 0.. {
         let record = ShareRecord { body_root: block.header.body_root, time: block.header.time, nonce };
         let key = share_key(&record, block.header.parent, block.header.bits);
-        let ticket = buffers.ticket(&model, &*state.params.dataset, &key);
+        let ticket = buffers.ticket(&model, &**state.params.dataset_at(state.height() + 1), &key);
         if round_target.admits(&ticket) && round.len() < MAX_SHARES_PER_BLOCK {
             round.push(record);
         }

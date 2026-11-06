@@ -217,8 +217,16 @@ pub fn flatten(dataset: &dyn Dataset) -> (Vec<u8>, Vec<u8>) {
 /// Gives a scanner on K0 for the same device, used when the kernel in use disagrees with the reference.
 pub type Fallback = Box<dyn FnOnce() -> Result<Box<dyn Scanner>, String> + Send>;
 
-/// Starts a worker that mines the jobs of `session` with `scanner`. `attempts` counts the attempts of this device and
-/// `mismatches` the nonces that the scanner returned and the CPU check refused.
+/// What a device needs for one model slot (spec/shares.md section 11.5): the slot's dataset, a scanner that holds
+/// it, and the K0 scanner to fall back to when the scanner runs an optimised kernel.
+pub struct Lane {
+    pub dataset: Arc<dyn Dataset>,
+    pub scanner: Box<dyn Scanner>,
+    pub fallback: Option<Fallback>,
+}
+
+/// Starts a worker that mines the jobs of `session` with `scanner`, for a network of one model. `attempts` counts
+/// the attempts of this device and `mismatches` the nonces that the scanner returned and the CPU check refused.
 pub fn spawn_worker(
     session: Session,
     dataset: Arc<dyn Dataset>,
@@ -226,28 +234,28 @@ pub fn spawn_worker(
     attempts: Arc<AtomicU64>,
     mismatches: Arc<AtomicU64>,
 ) -> JoinHandle<()> {
-    spawn_worker_with_fallback(session, dataset, scanner, None, attempts, mismatches, Arc::new(AtomicU64::new(0)))
+    let lane = Lane { dataset, scanner, fallback: None };
+    spawn_worker_with_fallback(session, vec![lane], attempts, mismatches, Arc::new(AtomicU64::new(0)))
 }
 
-/// As [`spawn_worker`] for a scanner that runs an optimised kernel when `fallback` is given. The worker then also
+/// As [`spawn_worker`] with one lane per model slot: a job is mined by the lane of its slot, and a job of a slot
+/// without a lane waits for the next job. For a lane that runs an optimised kernel (`fallback` given) the worker also
 /// checks each model it uploads on [`MODEL_PROBES`] nonces, audits the ticket of one nonce every [`AUDIT_BATCHES`]
 /// batches, and treats a nonce that the reference refuses as a fault. On any fault it takes the scanner of
 /// `fallback` (K0), uploads the model to it, scans the batch again and counts one in `fallbacks`. The reference
 /// decides every nonce that is reported, with or without `fallback`.
 pub fn spawn_worker_with_fallback(
     session: Session,
-    dataset: Arc<dyn Dataset>,
-    mut scanner: Box<dyn Scanner>,
-    mut fallback: Option<Fallback>,
+    lanes: Vec<Lane>,
     attempts: Arc<AtomicU64>,
     mismatches: Arc<AtomicU64>,
     fallbacks: Arc<AtomicU64>,
 ) -> JoinHandle<()> {
     thread::spawn(move || {
         let mut buffers = ShareBuffers::new();
-        let mut loaded: Option<Arc<Model>> = None;
+        // the model loaded on each lane's scanner
+        let mut lanes: Vec<(Lane, Option<Arc<Model>>)> = lanes.into_iter().map(|l| (l, None)).collect();
         let mut batches = 0u64;
-        let batch = scanner.capacity().min(BATCH);
         // Replaces the scanner by the fallback and uploads `model` to it; false when that is impossible.
         let switch =
             |scanner: &mut Box<dyn Scanner>, fallback: &mut Option<Fallback>, model: &Model, why: &str| -> bool {
@@ -274,13 +282,18 @@ pub fn spawn_worker_with_fallback(
                 thread::sleep(Duration::from_millis(20));
                 continue;
             };
+            let Some((Lane { dataset, scanner, fallback }, loaded)) = lanes.get_mut(unit.slot as usize) else {
+                thread::sleep(Duration::from_millis(200));
+                continue;
+            };
+            let batch = scanner.capacity().min(BATCH);
             let Some((start, count)) = unit.take_nonces(batch) else {
                 thread::sleep(Duration::from_millis(20));
                 continue;
             };
             let reference = |buffers: &mut ShareBuffers, header: &mut [u8; 80], nonce: u32| {
                 header[76..80].copy_from_slice(&nonce.to_le_bytes());
-                buffers.ticket(&unit.model, &*dataset, blake3::hash(header).as_bytes())
+                buffers.ticket(&unit.model, &**dataset, blake3::hash(header).as_bytes())
             };
             if !loaded.as_ref().is_some_and(|m| Arc::ptr_eq(m, &unit.model)) {
                 let (w1, w2) = unpack_weights(&unit.model.packed_weights());
@@ -288,16 +301,16 @@ pub fn spawn_worker_with_fallback(
                     eprintln!("neb-miner-gpu: cannot load the model on the device: {e}");
                     return;
                 }
-                loaded = Some(unit.model.clone());
+                *loaded = Some(unit.model.clone());
                 if fallback.is_some() {
                     let mut header = unit.header;
                     for i in 0..MODEL_PROBES as u32 {
                         let nonce = i.wrapping_mul(0x9E37_79B9);
                         let want = reference(&mut buffers, &mut header, nonce);
-                        if !probe_ticket(&mut *scanner, &header, nonce, &want).unwrap_or(false) {
+                        if !probe_ticket(&mut **scanner, &header, nonce, &want).unwrap_or(false) {
                             if !switch(
-                                &mut scanner,
-                                &mut fallback,
+                                scanner,
+                                fallback,
                                 &unit.model,
                                 "the kernel disagrees with the reference on a new model",
                             ) {
@@ -333,10 +346,10 @@ pub fn spawn_worker_with_fallback(
                 if fallback.is_some() && !fault && batches.is_multiple_of(AUDIT_BATCHES) {
                     let nonce = start + count / 2;
                     let want = reference(&mut buffers, &mut header, nonce);
-                    fault = !probe_ticket(&mut *scanner, &header, nonce, &want).unwrap_or(false);
+                    fault = !probe_ticket(&mut **scanner, &header, nonce, &want).unwrap_or(false);
                 }
                 if fault && fallback.is_some() {
-                    if !switch(&mut scanner, &mut fallback, &unit.model, "the kernel disagrees with the reference") {
+                    if !switch(scanner, fallback, &unit.model, "the kernel disagrees with the reference") {
                         return;
                     }
                     continue; // scan the batch again with K0

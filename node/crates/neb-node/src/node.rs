@@ -133,7 +133,7 @@ pub struct NodeInner {
     /// Models of the side-branch blocks whose proof and shares were checked,
     /// for the last `MODEL_DEPTH` levels (spec/shares.md section 11.4). The
     /// models of the best chain are in `state`.
-    pub side_models: BTreeMap<[u8; 32], Arc<Model>>,
+    pub side_models: BTreeMap<[u8; 32], neb_chain::Models>,
     /// Block id to height for the blocks of the current best chain.
     pub best_index: BTreeMap<[u8; 32], u32>,
     /// Lock that the jobs pay (`--miner-lock`); without it the node gives no work to miners.
@@ -481,11 +481,11 @@ impl Node {
             if !block.body_ok() {
                 return Err(NodeError::Connect("body_root does not commit to the body".into()));
             }
-            let model_p = model_of(&inner, &block.header.parent).ok_or(NodeError::Orphan)?;
+            let model_p = models_of(&inner, &block.header.parent).ok_or(NodeError::Orphan)?;
             let model_pp = if parent_height == 0 {
                 model_p.clone()
             } else {
-                model_of(&inner, &parent.parent).ok_or(NodeError::Orphan)?
+                models_of(&inner, &parent.parent).ok_or(NodeError::Orphan)?
             };
             (parent_height + 1, parent, (model_p, model_pp))
         };
@@ -500,7 +500,7 @@ impl Node {
             self.verify_pow,
             &block,
             &parent,
-            height == 1,
+            height,
             &models.0,
             &models.1,
         )
@@ -613,19 +613,24 @@ impl Node {
     pub fn work_frames(&self, id: u64) -> Option<Vec<u8>> {
         let inner = self.inner.lock().expect("node lock");
         let template = inner.work.job(id)?;
-        let mut frames = neb_work::model_frame(&template.model);
+        let mut frames = neb_work::model_frame(template.slot, &template.model);
         frames.extend_from_slice(&template.job.encode());
         Some(frames)
     }
 
-    /// The model of the tip.
+    /// The model the next block works on.
     pub fn tip_model(&self) -> Arc<Model> {
         self.inner.lock().expect("node lock").state.tip_model()
     }
 
-    /// The weights hash of the model of the tip (spec/shares.md section 7).
+    /// The state of the tip: one model per slot.
+    pub fn tip_models(&self) -> neb_chain::Models {
+        self.inner.lock().expect("node lock").state.tip_models()
+    }
+
+    /// The hash of the state of the tip (spec/shares.md section 7): with one slot the weights hash of its model.
     pub fn weights_hash(&self) -> [u8; 32] {
-        self.inner.lock().expect("node lock").state.tip_model().weights_hash()
+        neb_chain::models_hash(&self.inner.lock().expect("node lock").state.tip_models())
     }
 
     /// Pushes one fresh job to every connected miner after the best block
@@ -780,12 +785,12 @@ fn locator_start(inner: &NodeInner, locator: &[[u8; 32]]) -> u32 {
     0
 }
 
-/// The model of a known block: from the best chain when it is among the last
-/// `MODEL_DEPTH + 1` levels, else from the side-branch models. `None` when the
-/// model is not kept (spec/shares.md section 11.4).
-fn model_of(inner: &NodeInner, id: &[u8; 32]) -> Option<Arc<Model>> {
+/// The state of a known block: from the best chain when it is among the last
+/// `MODEL_DEPTH + 1` levels, else from the side-branch states. `None` when the
+/// state is not kept (spec/shares.md section 11.4).
+fn models_of(inner: &NodeInner, id: &[u8; 32]) -> Option<neb_chain::Models> {
     match inner.best_index.get(id) {
-        Some(height) => inner.state.model_at(*height),
+        Some(height) => inner.state.models_at(*height),
         None => inner.side_models.get(id).cloned(),
     }
 }

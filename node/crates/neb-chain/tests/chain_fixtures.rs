@@ -23,7 +23,7 @@ fn fixture(name: &str) -> ChainFixture {
 
 fn params_with(ds: Arc<dyn Dataset>) -> neb_chain::ChainParams {
     let mut p = demo::easy_params(1_793_318_400, demo::PROJECT_LOCK);
-    p.dataset = ds;
+    p.datasets = vec![ds];
     p
 }
 
@@ -163,4 +163,24 @@ fn the_recorded_three_pool_mnist_chain_replays() {
     assert_eq!((r.blocks, r.steps, r.shares, r.largest_step), (60, 59, 2000, 155));
     assert_eq!(r.final_weights_hash, hex32("c9817031e26931ee61c8a68bcbaf078fe9afb38f8b5c5cdb9ee63d159be53d0a"));
     assert_eq!(r.final_residual_hash, hex32("f28e2498ff16dc97dbc6f6003138dc87e0b34be2e09d062124ddd80e77e513c2"));
+}
+
+// Two models (Kepler and retina) mined by three pools in lockstep on the dataset set of protocol 3: block h is mined
+// on slot h mod 2 and its shares train slot (h - 1) mod 2. The final hashes are those of the Rust replay and of the
+// Python oracle. Needs the set file in `NEB_DATASETS` (`neb-datasets.bin`); skipped without it.
+#[test]
+fn the_recorded_two_model_chain_replays() {
+    let fx = fixture("pools-testnet2");
+    assert_eq!(fx.slots, 2);
+    let Some(path) = std::env::var_os("NEB_DATASETS") else {
+        eprintln!("SKIPPED: set NEB_DATASETS to neb-datasets.bin to replay the two-model chain");
+        return;
+    };
+    let want = hex32(fx.dataset.strip_prefix("file ").expect("a file dataset"));
+    let mut params = params_with(Arc::new(SyntheticDataset::new()));
+    params.datasets = neb_pow::shares::load_datasets(std::path::Path::new(&path), Some(&want)).expect("the set file");
+    let r = replay(&fx, &params).unwrap();
+    assert_eq!((r.blocks, r.steps, r.shares, r.largest_step), (40, 39, 1394, 155));
+    assert_eq!(r.final_weights_hash, hex32("83ead1e1759aabc6d442be0cb76cb1940961dd27667ff028894d3753aecec02d"));
+    assert_eq!(r.final_residual_hash, hex32("79729b78e5a1c40afd38335434e3eac566339e2ba663d81af6e97c55aa07da5c"));
 }

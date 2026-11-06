@@ -2,9 +2,10 @@
 //! the proof of work, the share lists, the model step and the state hashes block by block (spec/shares.md
 //! section 11). Test support like [`crate::demo`]; no node code depends on it.
 //!
-//! A fixture holds the seed of the model (the id of block 0), then for each block its 80-byte header, the
-//! share list it commits to (40-byte share records, spec/shares.md section 11.2) and the hashes of the model
-//! it gives. The body of a block is not recorded: the generators below use a stand-in body, one coinbase
+//! A fixture holds the seed of the models (the id of block 0) and the number of model slots K, then for each
+//! block its 80-byte header, the share list it commits to (40-byte share records, spec/shares.md section 11.2)
+//! and the hashes of the model its shares update: the model of slot `(h - 1) mod K` in the state of block `h`
+//! (with K = 1, the model of the block). The body of a block is not recorded: the generators below use a stand-in body, one coinbase
 //! `"sim-coinbase" || LE32(height)` (followed by `LE32(pool)` for a pool above 0), whose root is
 //! [`stand_in_body_root`]. The proof of work and the model step do not depend on the body beyond the
 //! `body_root` field of the header.
@@ -15,6 +16,7 @@
 //! neb-chain-fixture 2
 //! name NAME
 //! dataset synthetic | dataset file BLAKE3_HEX
+//! [slots K]                       (only when K > 1)
 //! seed HEX32
 //! block H pool P header HEX160 list R1,R2,... | - wh HEX64 rh HEX64 [loss c1 k1 a1 b1 c2 k2 a2 b2]
 //! ```
@@ -27,15 +29,13 @@
 //! (`2^SU` per unit): the losses of the step. A block without a step
 //! (height 1, or an empty list) has none.
 
-use std::sync::Arc;
-
 use neb_block::Header;
 use neb_pow::shares::{GradSum, Model, SU1, SU2};
 
 use crate::block::{
     Block, MAX_SHARES_PER_BLOCK, SHARE_RECORD_BYTES, ShareRecord, body_root_of, check_shares_list, shares_root,
 };
-use crate::model::{share_key, share_target, verify_block};
+use crate::model::{Models, initial_models, share_key, share_target, slot, verify_block};
 use crate::state::ChainParams;
 
 /// What the bounds of the step discarded in one layer during one step.
@@ -70,6 +70,8 @@ pub struct ChainFixture {
     pub name: String,
     /// `"synthetic"` or `"file BLAKE3_HEX"`.
     pub dataset: String,
+    /// Model slots of the chain (spec/shares.md section 11.2).
+    pub slots: u32,
     pub seed: [u8; 32],
     pub blocks: Vec<FixtureBlock>,
 }
@@ -118,8 +120,11 @@ fn from_hex<const K: usize>(s: &str) -> Result<[u8; K], String> {
 
 impl ChainFixture {
     pub fn to_text(&self) -> String {
-        let mut out =
-            format!("neb-chain-fixture 2\nname {}\ndataset {}\nseed {}\n", self.name, self.dataset, to_hex(&self.seed));
+        let mut out = format!("neb-chain-fixture 2\nname {}\ndataset {}\n", self.name, self.dataset);
+        if self.slots > 1 {
+            out += &format!("slots {}\n", self.slots);
+        }
+        out += &format!("seed {}\n", to_hex(&self.seed));
         for b in &self.blocks {
             let list = if b.list.is_empty() {
                 "-".to_string()
@@ -162,7 +167,15 @@ impl ChainFixture {
         };
         let name = field(lines.next(), "name")?;
         let dataset = field(lines.next(), "dataset")?;
-        let seed = from_hex::<32>(&field(lines.next(), "seed")?)?;
+        let mut next = lines.next();
+        let slots = match next.and_then(|l| l.strip_prefix("slots ")) {
+            Some(k) => {
+                next = lines.next();
+                k.parse::<u32>().ok().filter(|k| *k >= 1).ok_or(format!("bad slots line {k:?}"))?
+            }
+            None => 1,
+        };
+        let seed = from_hex::<32>(&field(next, "seed")?)?;
         let mut blocks = Vec::new();
         for line in lines {
             let f: Vec<&str> = line.split(' ').collect();
@@ -208,7 +221,7 @@ impl ChainFixture {
                 loss,
             });
         }
-        Ok(ChainFixture { name, dataset, seed, blocks })
+        Ok(ChainFixture { name, dataset, slots, seed, blocks })
     }
 }
 
@@ -253,7 +266,11 @@ pub fn account_step(before: &Model, gs1: &[i32], gs2: &[i32], after: &Model) -> 
 /// share (`verify_block`), then the model step; checks the headers, the stand-in bodies, the state hashes and
 /// (when recorded) the losses, and recomputes the step in 64-bit integers.
 pub fn replay(fx: &ChainFixture, params: &ChainParams) -> Result<ReplayReport, String> {
-    let mut models: Vec<Arc<Model>> = vec![Arc::new(Model::from_seed(&fx.seed))];
+    let k = params.datasets.len();
+    if fx.slots as usize != k {
+        return Err(format!("the fixture has {} slots, the parameters {k} datasets", fx.slots));
+    }
+    let mut models: Vec<Models> = vec![initial_models(&fx.seed, k)];
     let mut prev_id = fx.seed;
     let mut prev_header: Option<Header> = None;
     let mut report = ReplayReport {
@@ -278,8 +295,9 @@ pub fn replay(fx: &ChainFixture, params: &ChainParams) -> Result<ReplayReport, S
             return Err(format!("{tag}: body_root is not the stand-in root of the list"));
         }
         check_shares_list(&fb.list).map_err(|e| format!("{tag}: {e}"))?;
-        let model_p = models[i].clone();
-        let model_pp = if h >= 2 { models[i - 1].clone() } else { model_p.clone() };
+        let models_p = models[i].clone();
+        let models_pp = if h >= 2 { models[i - 1].clone() } else { models_p.clone() };
+        let t = slot(h - 1, k);
         let parent_header = prev_header.unwrap_or(Header {
             version: 0,
             parent: [0; 32],
@@ -289,18 +307,18 @@ pub fn replay(fx: &ChainFixture, params: &ChainParams) -> Result<ReplayReport, S
             nonce: 0,
         });
         let block = Block { header: fb.header, txs: Vec::new(), shares: fb.list.clone() };
-        let new = verify_block(params, true, &block, &parent_header, h == 1, &model_p, &model_pp)
+        let new = verify_block(params, true, &block, &parent_header, h, &models_p, &models_pp)
             .map_err(|e| format!("{tag}: {e}"))?;
-        if new.hashes() != (fb.weights_hash, fb.residual_hash) {
+        if new[t].hashes() != (fb.weights_hash, fb.residual_hash) {
             return Err(format!("{tag}: the state hashes differ from the fixture"));
         }
         if !fb.list.is_empty() {
             let mut sum = GradSum::new();
             for r in &fb.list {
-                sum.add(&model_pp, &*params.dataset, &share_key(r, parent_header.parent, parent_header.bits));
+                sum.add(&models_pp[t], &*params.datasets[t], &share_key(r, parent_header.parent, parent_header.bits));
             }
             let (gs1, gs2) = sum.sums();
-            let loss = account_step(&model_p, gs1, gs2, &new).map_err(|e| format!("{tag}: {e}"))?;
+            let loss = account_step(&models_p[t], gs1, gs2, &new[t]).map_err(|e| format!("{tag}: {e}"))?;
             if let Some(want) = fb.loss
                 && want != loss
             {
@@ -317,11 +335,13 @@ pub fn replay(fx: &ChainFixture, params: &ChainParams) -> Result<ReplayReport, S
         }
         prev_id = fb.header.id();
         prev_header = Some(fb.header);
+        (report.final_weights_hash, report.final_residual_hash) = new[t].hashes();
         models.push(new);
         report.blocks += 1;
     }
-    (report.final_weights_hash, report.final_residual_hash) =
-        models.last().expect("the genesis model is present").hashes();
+    if fx.blocks.is_empty() {
+        (report.final_weights_hash, report.final_residual_hash) = models[0][0].hashes();
+    }
     Ok(report)
 }
 
@@ -346,7 +366,9 @@ pub fn generate_stress(
         return Err("a step has 1 to 256 shares".into());
     }
     let seed = *blake3::hash(label.as_bytes()).as_bytes();
-    let mut fx = ChainFixture { name: name.into(), dataset: dataset_tag.into(), seed, blocks: Vec::new() };
+    let k = params.datasets.len();
+    let mut fx =
+        ChainFixture { name: name.into(), dataset: dataset_tag.into(), slots: k as u32, seed, blocks: Vec::new() };
     let mut state = rng_seed;
     let mut next = move || {
         state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
@@ -356,7 +378,7 @@ pub fn generate_stress(
         z ^ (z >> 31)
     };
     let target = neb_block::Target::from_bits(bits).map_err(|e| e.to_string())?;
-    let mut models: Vec<Arc<Model>> = vec![Arc::new(Model::from_seed(&seed))];
+    let mut models: Vec<Models> = vec![initial_models(&seed, k)];
     let mut prev = Header { version: 0, parent: [0; 32], body_root: [0; 32], time: 0, bits: 0, nonce: 0 };
     let mut prev_id = seed;
     let mut buffers = neb_pow::shares::ShareBuffers::new();
@@ -383,28 +405,29 @@ pub fn generate_stress(
             bits,
             nonce: 0,
         };
-        let model_p = models[h as usize - 1].clone();
-        let model_pp = if h >= 2 { models[h as usize - 2].clone() } else { model_p.clone() };
+        let models_p = models[h as usize - 1].clone();
+        let models_pp = if h >= 2 { models[h as usize - 2].clone() } else { models_p.clone() };
+        let (s, t) = (slot(h, k), slot(h - 1, k));
         for nonce in 0u32.. {
             header.nonce = nonce;
-            if target.admits(&buffers.ticket(&model_p, &*params.dataset, &header.id())) {
+            if target.admits(&buffers.ticket(&models_p[s], &*params.datasets[s], &header.id())) {
                 break;
             }
         }
         let block = Block { header, txs: Vec::new(), shares: list.clone() };
-        let new = verify_block(params, true, &block, &prev, h == 1, &model_p, &model_pp)
+        let new = verify_block(params, true, &block, &prev, h, &models_p, &models_pp)
             .map_err(|e| format!("block {h}: {e}"))?;
         let loss = if list.is_empty() {
             None
         } else {
             let mut sum = GradSum::new();
             for r in &list {
-                sum.add(&model_pp, &*params.dataset, &share_key(r, prev.parent, prev.bits));
+                sum.add(&models_pp[t], &*params.datasets[t], &share_key(r, prev.parent, prev.bits));
             }
             let (gs1, gs2) = sum.sums();
-            Some(account_step(&model_p, gs1, gs2, &new)?)
+            Some(account_step(&models_p[t], gs1, gs2, &new[t])?)
         };
-        let (weights_hash, residual_hash) = new.hashes();
+        let (weights_hash, residual_hash) = new[t].hashes();
         fx.blocks.push(FixtureBlock { height: h, pool: 0, header, list, weights_hash, residual_hash, loss });
         prev_id = header.id();
         prev = header;
@@ -430,18 +453,21 @@ pub fn generate_pools(
     pools: u32,
 ) -> Result<ChainFixture, String> {
     let seed = *blake3::hash(label.as_bytes()).as_bytes();
-    let mut fx = ChainFixture { name: name.into(), dataset: dataset_tag.into(), seed, blocks: Vec::new() };
+    let k = params.datasets.len();
+    let mut fx =
+        ChainFixture { name: name.into(), dataset: dataset_tag.into(), slots: k as u32, seed, blocks: Vec::new() };
     let target = neb_block::Target::from_bits(bits).map_err(|e| e.to_string())?;
     let round_target = share_target(bits).map_err(|e| e.to_string())?;
-    let mut models: Vec<Arc<Model>> = vec![Arc::new(Model::from_seed(&seed))];
+    let mut models: Vec<Models> = vec![initial_models(&seed, k)];
     let mut prev = Header { version: 0, parent: [0; 32], body_root: [0; 32], time: 0, bits: 0, nonce: 0 };
     let mut prev_id = seed;
     let mut buffers = neb_pow::shares::ShareBuffers::new();
     let mut round: std::collections::BTreeSet<ShareRecord> = std::collections::BTreeSet::new();
     for h in 1..=blocks {
         let list: Vec<ShareRecord> = round.iter().take(MAX_SHARES_PER_BLOCK).copied().collect();
-        let model_p = models[h as usize - 1].clone();
-        let model_pp = if h >= 2 { models[h as usize - 2].clone() } else { model_p.clone() };
+        let models_p = models[h as usize - 1].clone();
+        let models_pp = if h >= 2 { models[h as usize - 2].clone() } else { models_p.clone() };
+        let (s, t) = (slot(h, k), slot(h - 1, k));
         let time = 1_793_318_400 + 60 * h;
         let bodies: Vec<[u8; 32]> = (0..pools).map(|j| stand_in_body_root(h, j, &list)).collect();
         let mut next_round = std::collections::BTreeSet::new();
@@ -450,7 +476,7 @@ pub fn generate_pools(
             for j in 0..pools {
                 let header =
                     Header { version: 1, parent: prev_id, body_root: bodies[j as usize], time: time + j, bits, nonce };
-                let ticket = buffers.ticket(&model_p, &*params.dataset, &header.id());
+                let ticket = buffers.ticket(&models_p[s], &*params.datasets[s], &header.id());
                 if round_target.admits(&ticket) {
                     next_round.insert(ShareRecord::of_header(&header));
                 }
@@ -462,19 +488,19 @@ pub fn generate_pools(
         }
         let (pool, header) = won.expect("the scan runs until a solution");
         let block = Block { header, txs: Vec::new(), shares: list.clone() };
-        let new = verify_block(params, true, &block, &prev, h == 1, &model_p, &model_pp)
+        let new = verify_block(params, true, &block, &prev, h, &models_p, &models_pp)
             .map_err(|e| format!("block {h}: {e}"))?;
         let loss = if list.is_empty() {
             None
         } else {
             let mut sum = GradSum::new();
             for r in &list {
-                sum.add(&model_pp, &*params.dataset, &share_key(r, prev.parent, prev.bits));
+                sum.add(&models_pp[t], &*params.datasets[t], &share_key(r, prev.parent, prev.bits));
             }
             let (gs1, gs2) = sum.sums();
-            Some(account_step(&model_p, gs1, gs2, &new)?)
+            Some(account_step(&models_p[t], gs1, gs2, &new[t])?)
         };
-        let (weights_hash, residual_hash) = new.hashes();
+        let (weights_hash, residual_hash) = new[t].hashes();
         fx.blocks.push(FixtureBlock { height: h, pool, header, list, weights_hash, residual_hash, loss });
         prev_id = header.id();
         prev = header;

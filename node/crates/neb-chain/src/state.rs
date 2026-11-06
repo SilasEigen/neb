@@ -16,15 +16,15 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
-/// A block removed by a reorganisation: its id and its model.
-pub type RemovedBlock = ([u8; 32], Arc<Model>);
+/// A block removed by a reorganisation: its id and its state.
+pub type RemovedBlock = ([u8; 32], Models);
 
 use neb_block::{Header, Target};
 use neb_difficulty::Params as DifficultyParams;
 use neb_pow::shares::{Model, ShareBuffers, SharedDataset};
 
 use crate::block::{Block, MAX_BLOCK_BYTES, MAX_SHARES_PER_BLOCK, ShareRecord};
-use crate::model::{self, MODEL_DEPTH, ProofError, share_key, share_target};
+use crate::model::{self, MODEL_DEPTH, Models, ProofError, share_key, share_target, slot};
 use crate::tx::{COIN, LOCK_MULTISIG, LOCK_SINGLE, MAX_INPUTS, MAX_OUTPUTS, MAX_TX_BYTES, TxOut};
 
 /// A coinbase output created at height c is spendable in a block of height
@@ -82,9 +82,16 @@ pub struct ChainParams {
     /// `lock_data` of the multisig lock that the project-share output must
     /// carry (spec/node.md section 6.3).
     pub project_share_lock: [u8; 32],
-    /// The samples the shares of the network draw from (spec/shares.md
-    /// section 4).
-    pub dataset: SharedDataset,
+    /// The datasets of the network, one per model slot (spec/shares.md
+    /// sections 4 and 11.2); at least one.
+    pub datasets: Vec<SharedDataset>,
+}
+
+impl ChainParams {
+    /// The dataset of the model a block of height `height` works on.
+    pub fn dataset_at(&self, height: u32) -> &SharedDataset {
+        &self.datasets[slot(height, self.datasets.len())]
+    }
 }
 
 #[derive(Debug)]
@@ -195,9 +202,9 @@ pub struct ChainState {
     pub verify_pow: bool,
     blocks: Vec<Block>,
     undos: Vec<Undo>,
-    /// The model of each of the last `MODEL_DEPTH + 1` blocks of the best
-    /// chain, the tip last (spec/shares.md section 11.4).
-    models: VecDeque<Arc<Model>>,
+    /// The state (one model per slot) of each of the last `MODEL_DEPTH + 1`
+    /// blocks of the best chain, the tip last (spec/shares.md section 11.4).
+    models: VecDeque<Models>,
     utxos: BTreeMap<OutPoint, Utxo>,
     // The three sums of spec/node.md section 6.7: U, C and F. u128 holds the
     // sum of any number of u64 amounts that can occur.
@@ -245,7 +252,7 @@ impl ChainState {
         let state = ChainState {
             chain_id: genesis.id(),
             verify_pow: true,
-            models: VecDeque::from([Arc::new(Model::from_seed(&genesis.id()))]),
+            models: VecDeque::from([model::initial_models(&genesis.id(), params.datasets.len())]),
             blocks: vec![genesis],
             undos: Vec::new(),
             utxos,
@@ -305,16 +312,29 @@ impl ChainState {
         self.unspent_total + self.fees_total == self.coinbase_total
     }
 
-    /// The model of the block at `height` of the best chain, when it is among
+    /// The state of the block at `height` of the best chain, when it is among
     /// the last `MODEL_DEPTH + 1` kept levels.
-    pub fn model_at(&self, height: u32) -> Option<Arc<Model>> {
+    pub fn models_at(&self, height: u32) -> Option<Models> {
         let back = self.height().checked_sub(height)? as usize;
         let index = self.models.len().checked_sub(1 + back)?;
         self.models.get(index).cloned()
     }
 
+    pub fn tip_models(&self) -> Models {
+        self.models.back().expect("the genesis state is always present").clone()
+    }
+
+    /// The model that a child of the block at `height` works on: the model of
+    /// slot `(height + 1) mod K` in the state of that block. With one slot,
+    /// the model of the block.
+    pub fn model_at(&self, height: u32) -> Option<Arc<Model>> {
+        let models = self.models_at(height)?;
+        Some(models[slot(height + 1, models.len())].clone())
+    }
+
+    /// The model the next block works on (see `model_at`).
     pub fn tip_model(&self) -> Arc<Model> {
-        self.models.back().expect("the genesis model is always present").clone()
+        self.model_at(self.height()).expect("the tip state is always present")
     }
 
     /// Header rules 1 to 5 of spec/node.md section 6.1 for a child of the
@@ -353,22 +373,23 @@ impl ChainState {
         Ok(())
     }
 
-    /// The model, the bits and the share target of the round whose share
-    /// headers have the parent `q` (spec/shares.md sections 11.2 and 11.5): `q`
-    /// is the tip (the round of the next block's child, on the model of the
-    /// tip) or the parent of the tip (the round the next block lists, on the
-    /// model of the tip's parent). `None` for any other parent.
-    pub fn share_round(&self, q: &[u8; 32]) -> Option<(Arc<Model>, u32, Target)> {
+    /// The model, the dataset, the bits and the share target of the round
+    /// whose share headers have the parent `q` (spec/shares.md sections 11.2
+    /// and 11.5): `q` is the tip (the round of the next block, on the model
+    /// the next block works on) or the parent of the tip (the round the next
+    /// block lists, on the model the tip worked on, in its parent's state).
+    /// `None` for any other parent.
+    pub fn share_round(&self, q: &[u8; 32]) -> Option<(Arc<Model>, SharedDataset, u32, Target)> {
         let height = self.height();
-        let (model, bits) = if *q == self.tip_id() {
+        let (model, round_height, bits) = if *q == self.tip_id() {
             let bits = self.params.difficulty.next_bits(height, self.tip_time()).ok()?;
-            (self.tip_model(), bits)
+            (self.tip_model(), height + 1, bits)
         } else if height >= 1 && *q == self.tip().header.parent {
-            (self.model_at(height - 1)?, self.tip().header.bits)
+            (self.model_at(height - 1)?, height, self.tip().header.bits)
         } else {
             return None;
         };
-        Some((model, bits, share_target(bits).ok()?))
+        Some((model, self.params.dataset_at(round_height).clone(), bits, share_target(bits).ok()?))
     }
 
     /// Whether `record` is a valid share of the round whose headers have the
@@ -376,11 +397,11 @@ impl ChainState {
     /// nor its parent. When the proof of work is not checked (tests) every
     /// record of a known round is valid.
     pub fn check_share(&self, q: &[u8; 32], record: &ShareRecord) -> Option<bool> {
-        let (model, bits, target) = self.share_round(q)?;
+        let (model, dataset, bits, target) = self.share_round(q)?;
         if !self.verify_pow {
             return Some(true);
         }
-        let ticket = ShareBuffers::new().ticket(&model, &*self.params.dataset, &share_key(record, *q, bits));
+        let ticket = ShareBuffers::new().ticket(&model, &*dataset, &share_key(record, *q, bits));
         Some(target.admits(&ticket))
     }
 
@@ -403,20 +424,20 @@ impl ChainState {
     }
 
     /// Proof of work and share list of a child of the tip (spec/shares.md
-    /// sections 11.1 and 11.2); returns the model of the block. This is the
+    /// sections 11.1 and 11.2); returns the state of the block. This is the
     /// expensive part of validation: one ticket for the block and one per
     /// share. It does not touch the state.
-    pub fn verify_block(&self, block: &Block) -> Result<Arc<Model>, ChainError> {
+    pub fn verify_block(&self, block: &Block) -> Result<Models, ChainError> {
         let height = self.height();
-        let model_pp = self.model_at(height.saturating_sub(1)).expect("the tip and its parent keep their models");
+        let models_pp = self.models_at(height.saturating_sub(1)).expect("the tip and its parent keep their states");
         model::verify_block(
             &self.params,
             self.verify_pow,
             block,
             &self.tip().header,
-            height == 0,
-            &self.tip_model(),
-            &model_pp,
+            height + 1,
+            &self.tip_models(),
+            &models_pp,
         )
         .map_err(ChainError::Proof)
     }
@@ -433,9 +454,9 @@ impl ChainState {
     }
 
     /// As `connect_block` for a block whose proof and shares were already
-    /// verified with the same tip, which gave `model`; avoids evaluating the
-    /// tickets twice.
-    pub fn connect_verified(&mut self, block: &Block, model: Arc<Model>) -> Result<(), ChainError> {
+    /// verified with the same tip, which gave the state `model`; avoids
+    /// evaluating the tickets twice.
+    pub fn connect_verified(&mut self, block: &Block, model: Models) -> Result<(), ChainError> {
         self.check_body(block)?;
         self.apply_block(block, model)
     }
@@ -493,7 +514,7 @@ impl ChainState {
     /// the signature (the expensive step). Every error except `Conservation`
     /// is returned before the state is changed; `Conservation` cannot occur
     /// for checked amounts.
-    fn apply_block(&mut self, block: &Block, model: Arc<Model>) -> Result<(), ChainError> {
+    fn apply_block(&mut self, block: &Block, model: Models) -> Result<(), ChainError> {
         let height = self.height() + 1;
         let coinbase = &block.txs[0];
         let reward = subsidy(height);
@@ -648,13 +669,21 @@ impl ChainState {
     /// proofs were checked when the blocks were connected, so targets are not
     /// compared. Cost: the gradients of every listed share of the chain.
     fn rebuild_models(&mut self) -> Result<(), ChainError> {
-        let mut models: VecDeque<Arc<Model>> = VecDeque::from([Arc::new(Model::from_seed(&self.chain_id))]);
+        let mut models: VecDeque<Models> =
+            VecDeque::from([model::initial_models(&self.chain_id, self.params.datasets.len())]);
         for h in 1..self.blocks.len() {
-            let p = models.back().expect("the genesis model is present").clone();
+            let p = models.back().expect("the genesis state is present").clone();
             let pp = if h >= 2 { models[models.len() - 2].clone() } else { p.clone() };
-            let next =
-                model::verify_block(&self.params, false, &self.blocks[h], &self.blocks[h - 1].header, h == 1, &p, &pp)
-                    .map_err(ChainError::Proof)?;
+            let next = model::verify_block(
+                &self.params,
+                false,
+                &self.blocks[h],
+                &self.blocks[h - 1].header,
+                h as u32,
+                &p,
+                &pp,
+            )
+            .map_err(ChainError::Proof)?;
             models.push_back(next);
             while models.len() > MODEL_DEPTH as usize + 1 {
                 models.pop_front();
@@ -721,9 +750,9 @@ impl ChainState {
             self.rebuild_models()?;
         }
         let old: Vec<Block> = self.blocks[ancestor_height as usize + 1..].to_vec();
-        let removed: Vec<([u8; 32], Arc<Model>)> = (ancestor_height + 1..=self.height())
+        let removed: Vec<RemovedBlock> = (ancestor_height + 1..=self.height())
             .rev()
-            .map(|h| (self.id_at(h), self.model_at(h).expect("models of the last levels are rebuilt above")))
+            .map(|h| (self.id_at(h), self.models_at(h).expect("states of the last levels are rebuilt above")))
             .collect();
         while self.height() > ancestor_height {
             self.disconnect_one()?;

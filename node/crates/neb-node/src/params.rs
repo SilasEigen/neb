@@ -22,7 +22,7 @@ use neb_block::Header;
 use neb_chain::state::{ChainParams, project_share, subsidy};
 use neb_chain::tx::{COIN, LOCK_MULTISIG, LOCK_SINGLE, Transaction, TxIn, TxOut};
 use neb_chain::{Block, ChainState};
-use neb_pow::shares::{FileDataset, SharedDataset};
+use neb_pow::shares::{SharedDataset, load_datasets};
 
 /// Beacon of spec/node.md section 6.6: the hash of the first block of an external
 /// public chain in the usual display order, as 64 lower-case hexadecimal characters.
@@ -54,19 +54,33 @@ pub const NAME: &str = "testnet";
 pub const P2P_PORT: u16 = 3440;
 pub const WORK_PORT: u16 = 3441;
 pub const RPC_PORT: u16 = 8432;
-pub const DEFAULT_DATADIR: &str = "neb-testnet-data";
+pub const DEFAULT_DATADIR: &str = "neb-testnet2-data";
+
+/// The datasets of the network, one per model slot, in slot order (spec/shares.md section 11.6): the transit
+/// signals of the Kepler DR24 TCE table (NASA Exoplanet Archive; label 1 = planet candidate, 0 = false positive)
+/// and the retinal OCT scans of OCTMNIST (MedMNIST v2, CC BY 4.0; labels 0 to 3). `tools/make_datasets.py` builds
+/// the set file.
+pub const DATASET_NAMES: [&str; 2] = ["kepler", "retina"];
+
+/// BLAKE3 of the dataset set file `neb-datasets.bin` (both datasets, spec/shares.md section 11.6). A node refuses
+/// to start on another file.
+pub const DATASET_HASH: [u8; 32] = [
+    0xb1, 0x00, 0x8b, 0x97, 0x0f, 0x87, 0x08, 0x31, 0x79, 0xa7, 0xb2, 0x97, 0xb8, 0xf0, 0xfb, 0xec, 0x4c, 0xfc, 0x8c,
+    0xc6, 0x6f, 0x60, 0x5c, 0xf2, 0xfb, 0x2c, 0x03, 0xba, 0xd8, 0xb6, 0xf3, 0x7a,
+];
 
 /// BLAKE3 of the dataset file made by `tools/make_mnist_dataset.py` from the
-/// 60 000 MNIST training images. A node refuses to start on another file.
-pub const DATASET_HASH: [u8; 32] = [
+/// 60 000 MNIST training images, the dataset of protocol 2; the recorded
+/// chain fixture `pools-mnist` uses it.
+pub const MNIST_DATASET_HASH: [u8; 32] = [
     0x1a, 0x6a, 0xb4, 0x34, 0x7b, 0x5e, 0x7d, 0x81, 0x88, 0xd6, 0x65, 0x12, 0x47, 0x07, 0xdf, 0x7a, 0x1a, 0x2a, 0x28,
     0xbf, 0x60, 0xe5, 0x27, 0xe1, 0x67, 0xa8, 0x94, 0xfd, 0xec, 0x37, 0x3e, 0xd2,
 ];
 pub const ADDRESS_PREFIX: &str = "neb";
-/// Protocol number of the `version` message (spec/node.md section 8.2). 2: a share is bound to the parent of
-/// its header and the share list holds 40-byte records (spec/shares.md section 11.2); a node of protocol 1 does
-/// not connect.
-pub const PROTOCOL_VERSION: u32 = 2;
+/// Protocol number of the `version` message (spec/node.md section 8.2). 3: the chain trains one model per dataset
+/// and a block of height h works on slot h mod K (spec/shares.md section 11.2); 2: a share is bound to the parent
+/// of its header and the share list holds 40-byte records. A node of another protocol does not connect.
+pub const PROTOCOL_VERSION: u32 = 3;
 /// Maximum simultaneous peer sessions, inbound and outbound together. Local policy.
 pub const MAX_PEERS: usize = 8;
 /// Highest value of `--max-peers`: each session has its own threads.
@@ -107,7 +121,7 @@ fn genesis_witness() -> Vec<u8> {
     extranonce.update(BEACON.as_bytes());
     witness.extend_from_slice(&extranonce.finalize().as_bytes()[..8]);
     let mut miner_data = blake3::Hasher::new();
-    miner_data.update(b"neb-testnet-beacon-2");
+    miner_data.update(b"neb-testnet-beacon-3");
     miner_data.update(BEACON.as_bytes());
     witness.extend_from_slice(miner_data.finalize().as_bytes());
     witness
@@ -143,7 +157,7 @@ pub fn genesis() -> Block {
     block
 }
 
-pub fn chain_params(dataset: SharedDataset) -> ChainParams {
+pub fn chain_params(datasets: Vec<SharedDataset>) -> ChainParams {
     ChainParams {
         difficulty: neb_difficulty::Params {
             spacing: neb_difficulty::SPACING,
@@ -153,13 +167,22 @@ pub fn chain_params(dataset: SharedDataset) -> ChainParams {
             anchor_time: GENESIS_TIME,
         },
         project_share_lock: project_share_lock(),
-        dataset,
+        datasets,
     }
 }
 
-/// Reads the dataset file and checks it against the pinned hash.
-pub fn load_dataset(path: &Path) -> Result<SharedDataset, String> {
-    Ok(std::sync::Arc::new(FileDataset::load(path, Some(&DATASET_HASH))?))
+/// Reads the dataset set file and checks it against the pinned hash and the number of slots.
+pub fn load_dataset(path: &Path) -> Result<Vec<SharedDataset>, String> {
+    let sets = load_datasets(path, Some(&DATASET_HASH))?;
+    if sets.len() != DATASET_NAMES.len() {
+        return Err(format!(
+            "{} holds {} datasets, the network has {}",
+            path.display(),
+            sets.len(),
+            DATASET_NAMES.len()
+        ));
+    }
+    Ok(sets)
 }
 
 pub fn genesis_id() -> [u8; 32] {
@@ -198,7 +221,7 @@ impl NetworkParams {
     }
 }
 
-pub fn testnet(dataset: SharedDataset) -> NetworkParams {
+pub fn testnet(dataset: Vec<SharedDataset>) -> NetworkParams {
     let genesis = genesis();
     NetworkParams {
         name: NAME,
@@ -216,7 +239,7 @@ pub fn testnet(dataset: SharedDataset) -> NetworkParams {
 }
 
 /// Builds the chain state from the genesis block.
-pub fn genesis_state(dataset: SharedDataset) -> Result<ChainState, String> {
+pub fn genesis_state(dataset: Vec<SharedDataset>) -> Result<ChainState, String> {
     ChainState::from_genesis(chain_params(dataset), genesis()).map_err(|e| e.to_string())
 }
 
@@ -232,8 +255,8 @@ mod tests {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    fn dataset() -> SharedDataset {
-        std::sync::Arc::new(SyntheticDataset::new())
+    fn dataset() -> Vec<SharedDataset> {
+        DATASET_NAMES.iter().map(|_| std::sync::Arc::new(SyntheticDataset::new()) as SharedDataset).collect()
     }
 
     // The genesis block layout of spec/node.md section 6.6.
@@ -325,7 +348,7 @@ mod tests {
         assert_eq!(project_share_lock(), genesis().txs[0].outputs[1].lock_data);
         assert_eq!(hex(&PROJECT_PUBLIC_KEY), "25dadba82b1372fd76c1901524cc742224661d6fc5f0ba1b4e95f526a3aa72d3");
         assert_eq!(hex(&project_share_lock()), "270bbd6380c0c7022176e202083d5671ed6bb7bc0c27350bcbd134846ce87dd5");
-        assert_eq!(hex(&genesis_id()), "7c43ea053c733620043a1aa67d54e66eb41d4ac0c6d5a53f3a29176ace454cd2");
-        assert_eq!(hex(&magic()), "6bcb09e5");
+        assert_eq!(hex(&genesis_id()), "4b9cdfd8a859c2cde2fc768b2264f67c5b4d3ec839cd070fcfdab478d0e55e28");
+        assert_eq!(hex(&magic()), "cd16272d");
     }
 }

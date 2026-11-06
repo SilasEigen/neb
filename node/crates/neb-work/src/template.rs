@@ -117,9 +117,13 @@ pub struct Template {
     pub txs: Vec<Transaction>,
     /// The share list of the block (spec/shares.md section 11.2).
     pub shares: Vec<ShareRecord>,
-    /// The model of the parent, on which the attempts and shares of the job are
-    /// evaluated.
+    /// The model the job's block works on (its slot in the state of the parent), on
+    /// which the attempts and shares of the job are evaluated.
     pub model: Arc<Model>,
+    /// The slot of that model, sent to the miner in the model frame.
+    pub slot: u8,
+    /// The dataset of that slot.
+    pub dataset: neb_pow::shares::SharedDataset,
     /// The reference header of the job: all-zero extranonce, `time_start`,
     /// nonce 0. A nonce reported on the job is the record of this header with
     /// that nonce (spec/shares.md section 11.5).
@@ -320,7 +324,9 @@ impl Work {
         txs.extend(chosen);
         let base =
             build_block(&job, &txs, &shares, &vec![0u8; job.extranonce_size as usize], job.time_start, 0)?.header;
-        self.jobs.insert(id, Template { job, txs, shares, model: state.tip_model(), base });
+        let slot = neb_chain::slot(height, state.params.datasets.len()) as u8;
+        let dataset = state.params.dataset_at(height).clone();
+        self.jobs.insert(id, Template { job, txs, shares, model: state.tip_model(), slot, dataset, base });
         // Ids increase, so the first key is the oldest job.
         while self.jobs.len() > KEPT_JOBS {
             self.jobs.pop_first();
@@ -336,19 +342,13 @@ impl Work {
     /// new, for the node to relay, and `None` for a duplicate or when the
     /// parent already holds `MAX_STORED_SHARES` records. Fails on an unknown job
     /// or a ticket above the share target.
-    pub fn add_share(
-        &mut self,
-        id: u64,
-        nonce: u32,
-        dataset: &dyn neb_pow::shares::Dataset,
-        check: bool,
-    ) -> Result<Option<([u8; 32], ShareRecord)>, String> {
+    pub fn add_share(&mut self, id: u64, nonce: u32, check: bool) -> Result<Option<([u8; 32], ShareRecord)>, String> {
         let template = self.jobs.get(&id).ok_or("unknown job")?;
         let record = ShareRecord { body_root: template.base.body_root, time: template.base.time, nonce };
         let parent = template.base.parent;
         if check {
             let key = share_key(&record, parent, template.base.bits);
-            let ticket = ShareBuffers::new().ticket(&template.model, dataset, &key);
+            let ticket = ShareBuffers::new().ticket(&template.model, &*template.dataset, &key);
             if !Target(template.job.share_target).admits(&ticket) {
                 return Err("the ticket is above the share target".into());
             }

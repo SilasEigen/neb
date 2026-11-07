@@ -28,8 +28,8 @@ use neb_pow::shares::{SharedDataset, load_datasets};
 /// public chain in the usual display order, as 64 lower-case hexadecimal characters.
 pub const BEACON: &str = "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f";
 
-/// 2026-11-05 19:00:00 UTC, the start of the network: block 1 cannot be dated earlier.
-pub const GENESIS_TIME: u32 = 1_793_905_200;
+/// 2026-11-07 19:00:00 UTC, the start of the network: block 1 cannot be dated earlier.
+pub const GENESIS_TIME: u32 = 1_794_078_000;
 
 /// The target of the genesis block and the ASERT anchor: 2^236.
 ///
@@ -348,7 +348,7 @@ mod tests {
         assert_eq!(project_share_lock(), genesis().txs[0].outputs[1].lock_data);
         assert_eq!(hex(&PROJECT_PUBLIC_KEY), "25dadba82b1372fd76c1901524cc742224661d6fc5f0ba1b4e95f526a3aa72d3");
         assert_eq!(hex(&project_share_lock()), "270bbd6380c0c7022176e202083d5671ed6bb7bc0c27350bcbd134846ce87dd5");
-        assert_eq!(hex(&genesis_id()), "4b9cdfd8a859c2cde2fc768b2264f67c5b4d3ec839cd070fcfdab478d0e55e28");
-        assert_eq!(hex(&magic()), "cd16272d");
+        assert_eq!(hex(&genesis_id()), "8271952aba2ac5340c1dfe884caa1f2c6ee765487fa2117ddcd90710ce87248d");
+        assert_eq!(hex(&magic()), "1db70ba3");
     }
 }

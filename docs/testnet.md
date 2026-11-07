@@ -42,15 +42,15 @@ The node refuses to start when the dataset file does not have the pinned hash. T
 | peer-to-peer port | 3440 |
 | work service port | 3441, loopback only |
 | JSON-RPC port | 8432, loopback only |
-| software version | 0.1.0 |
+| software version | 0.2.0 |
 | protocol version | 2 (a node of protocol 1, the first share rule, does not connect) |
-| network magic | `cd16272d` (four bytes, hex) |
+| network magic | `1db70ba3` (four bytes, hex) |
 | default maximum peers | 8 (`--max-peers`) |
-| genesis timestamp | 1793905200 (2026-11-05 19:00:00 UTC) |
+| genesis timestamp | 1794078000 (2026-11-07 19:00:00 UTC) |
 | genesis target bits | `0xd5800000` (2^236) |
 | proof-of-work limit bits | `0xd5800000` (2^236, the genesis target) |
 | share target | the block target times 32 (2^241 at the genesis target) |
-| genesis id | `4b9cdfd8a859c2cde2fc768b2264f67c5b4d3ec839cd070fcfdab478d0e55e28` |
+| genesis id | `8271952aba2ac5340c1dfe884caa1f2c6ee765487fa2117ddcd90710ce87248d` |
 | dataset file hash (BLAKE3) | `b1008b970f87083179a7b297b8f0fbec4cfc8cc66f605cf2fb2c03bad8b6f37a` |
 
 The magic is the first four bytes of `BLAKE3("neb-testnet-magic" || genesis_id)`, so two chains with different genesis blocks cannot exchange messages by accident. The initial model is derived from the genesis id (`spec/shares.md` section 11.2).
@@ -82,11 +82,11 @@ The genesis coinbase pays the reward of height 0: 19 coins to a lock that no key
 ```
 network     : testnet
 beacon      : 000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f
-genesis id  : 4b9cdfd8a859c2cde2fc768b2264f67c5b4d3ec839cd070fcfdab478d0e55e28
-genesis time: 1793905200
+genesis id  : 8271952aba2ac5340c1dfe884caa1f2c6ee765487fa2117ddcd90710ce87248d
+genesis time: 1794078000
 genesis bits: 0xd5800000
 pow limit   : 0xd5800000
-magic       : cd16272d
+magic       : 1db70ba3
 p2p port    : 3440
 work port   : 3441
 rpc port    : 8432
@@ -235,7 +235,7 @@ cargo build --release --locked -p neb-gpuminer --features cuda
 
 ## Mining on HiveOS
 
-The release has a package for the custom miner of HiveOS, `nebminer-0.1.0.tar.gz`. It holds the node, the wallet, the GPU miner and the dataset file, and the four scripts of the HiveOS interface (`tools/hiveos`). `tools/hiveos-package.sh` builds it. The miner uses every GPU of the rig by itself, so the flight sheet does not choose cards, and an option such as `--devices 0,1` in the extra arguments narrows the choice.
+The release has a package for the custom miner of HiveOS, `nebminer-0.2.0.tar.gz`. It holds the node, the wallet, the GPU miner and the dataset file, and the four scripts of the HiveOS interface (`tools/hiveos`). `tools/hiveos-package.sh` builds it. The miner uses every GPU of the rig by itself, so the flight sheet does not choose cards, and an option such as `--devices 0,1` in the extra arguments narrows the choice.
 
 Create a flight sheet with a custom miner:
 
@@ -243,7 +243,7 @@ Create a flight sheet with a custom miner:
 |---|---|
 | Miner | Custom |
 | Miner name | `nebminer` |
-| Installation URL | the link of `nebminer-0.1.0.tar.gz` on the release page |
+| Installation URL | the link of `nebminer-0.2.0.tar.gz` on the release page |
 | Hash algorithm | leave empty or choose any |
 | Wallet and worker template | your `neb1...` address (a suffix such as `.%WORKER_NAME%` is ignored) |
 | Pool URL | one or more relays as `HOST:PORT`, separated by spaces |

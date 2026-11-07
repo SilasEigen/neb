@@ -51,7 +51,7 @@ In simulation of the protocol, the Kepler model reaches 88.8 % on stars it never
 
 ## Status
 
-Version 0.2.0 runs a test network: protocol 3, genesis `4b9cdfd8a859...` (full id and parameters in [docs/testnet.md](docs/testnet.md)). Its coins have no value. By default a node dials the two public relays `seed1.neuralenginebyte.org` and `seed2.neuralenginebyte.org` (port 3440); `--no-seeds` keeps it alone, and `--connect` and `--seed` choose other peers.
+Version 0.2.0 runs a test network: protocol 3, genesis `8271952aba2a...` (full id and parameters in [docs/testnet.md](docs/testnet.md)). Its coins have no value. By default a node dials the two public relays `seed1.neuralenginebyte.org` and `seed2.neuralenginebyte.org` (port 3440); `--no-seeds` keeps it alone, and `--connect` and `--seed` choose other peers.
 
 ## Quick start
 

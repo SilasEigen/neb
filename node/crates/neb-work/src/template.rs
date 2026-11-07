@@ -294,8 +294,15 @@ impl Work {
         let shares = state.valid_shares(kept);
         // The later of the clock and the parent time plus one (spec/node.md
         // section 7.1), so the header time passes the median rule when the
-        // clock lags.
-        let starting_time = now.max(state.tip_time().saturating_add(1));
+        // clock lags. A job on the same tip as the newest one starts one second
+        // after it, so it gives new nonces even when the clock has not moved past
+        // that time; at most 60 s ahead of the clock (the future limit is 120 s).
+        let after_newest = self
+            .jobs
+            .last_key_value()
+            .filter(|(_, t)| t.job.parent == state.tip_id())
+            .map_or(0, |(_, t)| t.job.time_start.saturating_add(1).min(now.saturating_add(60)));
+        let starting_time = now.max(state.tip_time().saturating_add(1)).max(after_newest);
         let id = self.next_id;
         self.next_id += 1;
         let tx_count = (chosen.len() + 1) as u32;

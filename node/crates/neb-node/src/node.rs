@@ -45,6 +45,10 @@ pub const BLOCKS_BATCH: usize = 500;
 /// (one model: weights and residuals, spec/shares.md section 4) is about 32 MB.
 const MAX_SIDE_MODELS: usize = 64;
 
+/// Seconds without a job push after which the miners get a fresh job on the same tip (local policy). A job holds 2^32
+/// nonces, which a fast miner tries in about two minutes; the fresh job has a new `time_start`, so new nonces.
+pub const JOB_REFRESH_SECS: u32 = 30;
+
 #[derive(Debug)]
 pub enum NodeError {
     Io(String),
@@ -149,6 +153,8 @@ pub struct Node {
     pub(crate) inner: Arc<Mutex<NodeInner>>,
     pub(crate) peers: Arc<PeerSet>,
     pub(crate) miners: Arc<MinerSet>,
+    /// Unix time of the last job push; held while a push runs, so pushes reach the miners in the order they were made.
+    pub(crate) job_push: Arc<Mutex<u32>>,
     pub(crate) network: NetworkParams,
     pub(crate) verify_pow: bool,
     pub(crate) pow_budget: NonZeroU32,
@@ -281,6 +287,7 @@ impl Node {
             inner: Arc::new(Mutex::new(inner)),
             peers,
             miners,
+            job_push: Arc::new(Mutex::new(now)),
             network: config.network,
             verify_pow: config.verify_pow,
             pow_budget: NonZeroU32::new(DEFAULT_POW_BUDGET).expect("nonzero"),
@@ -637,8 +644,12 @@ impl Node {
     }
 
     /// Pushes one fresh job to every connected miner after the best block
-    /// changes, whatever its origin (spec/node.md section 7.1).
+    /// changes, whatever its origin, and every `JOB_REFRESH_SECS` while it does
+    /// not (spec/node.md section 7.1).
     fn push_job_to_miners(&self) {
+        // One push at a time: a job on an older tip never reaches the miners after a job on a newer one.
+        let mut pushed_at = self.job_push.lock().expect("job push");
+        *pushed_at = now();
         if self.miners.is_empty() {
             return;
         }
@@ -652,6 +663,14 @@ impl Node {
             return;
         };
         self.miners.broadcast(&frames);
+    }
+
+    /// Pushes a fresh job to the miners when none was pushed for `JOB_REFRESH_SECS` seconds before `now`.
+    pub fn refresh_miner_jobs(&self, now: u32) {
+        let due = self.job_push.lock().expect("job push").saturating_add(JOB_REFRESH_SECS) <= now;
+        if due {
+            self.push_job_to_miners();
+        }
     }
 
     /// Rebuilds a block from a work submission and accepts it. The error is a

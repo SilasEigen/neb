@@ -171,6 +171,17 @@ impl Node {
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
         let join = std::thread::spawn(move || {
+            // A fresh job when no block came for JOB_REFRESH_SECS, on its own thread so that a slow miner socket never
+            // holds up the accept loop.
+            let refresher = {
+                let (node, stop) = (node.clone(), stop2.clone());
+                std::thread::spawn(move || {
+                    while !stop.load(Ordering::Relaxed) {
+                        std::thread::sleep(Duration::from_millis(250));
+                        node.refresh_miner_jobs(now());
+                    }
+                })
+            };
             while !stop2.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((stream, _)) => {
@@ -186,6 +197,8 @@ impl Node {
                     Err(_) => break,
                 }
             }
+            stop2.store(true, Ordering::Relaxed);
+            let _ = refresher.join();
         });
         Ok(WorkHandle { addr: local, stop, join: Some(join) })
     }

@@ -180,6 +180,41 @@ fn a_miners_own_submit_leaves_it_with_a_fresh_job() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+// With no new block, the miner gets a fresh job on the same tip once JOB_REFRESH_SECS have passed: a job holds 2^32
+// nonces, which a fast miner tries in about two minutes.
+#[test]
+fn a_miner_gets_a_fresh_job_when_no_block_arrives() {
+    let dir = temp_dir("refresh");
+    let node = open(&dir);
+    let live = Live::new();
+    let log = Arc::new(Log::new(live.clone(), ColorMode::Never));
+    node.set_miner_lock(demo::MINER_LOCK);
+    let work = node.start_work_service("127.0.0.1:0".parse().unwrap(), log, live).expect("work service");
+    let mut miner = TcpStream::connect(work.addr).expect("miner dials the work service");
+    let mut buf = Vec::new();
+    miner.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    let first = read_job(&mut miner, &mut buf);
+
+    // Not due yet: nothing is sent.
+    let now = neb_node::node::now();
+    node.refresh_miner_jobs(now);
+    miner.set_read_timeout(Some(Duration::from_millis(300))).unwrap();
+    assert!(miner.read(&mut [0u8; 1]).is_err(), "no job before the refresh is due");
+
+    miner.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    node.refresh_miner_jobs(now + neb_node::node::JOB_REFRESH_SECS);
+    let second = read_job(&mut miner, &mut buf);
+    assert_eq!(second.parent, first.parent, "same tip");
+    assert_eq!(second.height, first.height);
+    assert_ne!(second.id, first.id, "the job must be a new one");
+    assert!(second.time_start > first.time_start, "a later time, so new nonces");
+
+    drop(work);
+    drop(miner);
+    drop(node);
+    let _ = fs::remove_dir_all(&dir);
+}
+
 // Without --miner-lock a node gives no work: a miner that connects is closed without a job, so no block can pay a
 // lock that nobody chose.
 #[test]

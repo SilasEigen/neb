@@ -436,3 +436,66 @@ fn records_of_other_miners_are_kept_by_parent_listed_and_bounded() {
 fn demo_easy_state() -> ChainState {
     ChainState::from_genesis(demo::easy_params(T0, demo::PROJECT_LOCK), demo::easy_genesis(T0)).expect("genesis")
 }
+
+/// A chain where `sk` holds two mature outputs: the genesis output and the coinbase of block 1.
+fn chain_with_two_outputs(sk: &SigningKey) -> (ChainState, OutPoint, OutPoint) {
+    let mut state = chain_with(sk);
+    let reward = subsidy(1);
+    let cb = demo::coinbase(1, lock_of(sk), demo::PROJECT_LOCK, reward - project_share(reward));
+    let second = OutPoint { txid: cb.txid(), index: 0 };
+    let blk = demo::block(state.tip_id(), T0 + 30, 0xC280_0000, 99, vec![cb]);
+    state.connect_block(&blk).expect("connect");
+    demo_blocks(&mut state, 100);
+    (state, OutPoint { txid: demo::genesis_to(T0, lock_of(sk)).txs[0].txid(), index: 0 }, second)
+}
+
+// A transaction pays at least one base unit per byte; the fee of the wallet passes.
+#[test]
+fn mempool_refuses_a_fee_below_the_minimum() {
+    let sk = key(9);
+    let (state, out, _) = chain_with_two_outputs(&sk);
+    let amount = state.utxo(&out).unwrap().amount;
+    let mut pool = Mempool::with_limit(10_000_000);
+    assert_eq!(pool.accept(&state, &spend(&state, out, &sk, amount)), Err(MempoolError::LowFee));
+    assert_eq!(pool.accept(&state, &spend(&state, out, &sk, amount - 10)), Err(MempoolError::LowFee));
+    assert_eq!(pool.accept(&state, &spend(&state, out, &sk, amount - 10_000)), Ok(10_000));
+}
+
+// A full pool takes a transaction of a higher fee rate by evicting the lowest one, and refuses a lower one.
+#[test]
+fn a_full_mempool_evicts_the_lowest_fee_rate() {
+    let sk = key(9);
+    let (state, a, b) = chain_with_two_outputs(&sk);
+    let (amount_a, amount_b) = (state.utxo(&a).unwrap().amount, state.utxo(&b).unwrap().amount);
+    let low = spend(&state, a, &sk, amount_a - 1_000);
+    let size = low.encode().len();
+    let mut pool = Mempool::with_limit(size + size / 2);
+    pool.accept(&state, &low).expect("room for one");
+    assert_eq!(pool.accept(&state, &spend(&state, b, &sk, amount_b - 500)), Err(MempoolError::Full));
+    let high = spend(&state, b, &sk, amount_b - 50_000);
+    assert_eq!(pool.accept(&state, &high), Ok(50_000));
+    assert!(pool.tx(&low.txid()).is_none(), "the lowest fee rate left the pool");
+    assert!(pool.tx(&high.txid()).is_some());
+    assert_eq!((pool.len(), pool.bytes()), (1, high.encode().len()));
+    // the evicted transaction's input is free again
+    let again = spend(&state, a, &sk, amount_a - 100_000);
+    assert_eq!(pool.accept(&state, &again), Ok(100_000), "a higher rate evicts `high` in turn");
+}
+
+// A confirmed block removes the pool transactions that spend its inputs and frees their index entries.
+#[test]
+fn a_confirmed_spend_removes_the_conflicting_pool_transaction() {
+    let sk = key(9);
+    let (state, a, b) = chain_with_two_outputs(&sk);
+    let amount_a = state.utxo(&a).unwrap().amount;
+    let mut pool = Mempool::with_limit(10_000_000);
+    let pending = spend(&state, a, &sk, amount_a - 10_000);
+    pool.accept(&state, &pending).expect("accept");
+    pool.accept(&state, &spend(&state, b, &sk, state.utxo(&b).unwrap().amount - 10_000)).expect("accept");
+    let confirmed = spend(&state, a, &sk, amount_a - 20_000);
+    pool.remove_confirmed(&[confirmed]);
+    assert!(pool.tx(&pending.txid()).is_none());
+    assert_eq!(pool.len(), 1);
+    // the index no longer names `pending`: the same input is accepted again (the test state did not spend it)
+    assert_eq!(pool.accept(&state, &pending), Ok(10_000));
+}

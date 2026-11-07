@@ -526,8 +526,8 @@ impl Node {
             inner.last_block_at = now();
             let h = inner.state.height();
             drop(inner);
-            self.announce(InvKind::Block, &[id], None);
             self.push_job_to_miners();
+            self.announce(InvKind::Block, &[id], None);
             return Ok(BlockOutcome::Connected { height: h });
         }
 
@@ -594,8 +594,8 @@ impl Node {
         let disconnected = old_ids.len() as u32;
         let tip = inner.state.tip_id();
         drop(inner);
-        self.announce(InvKind::Block, &[tip], None);
         self.push_job_to_miners();
+        self.announce(InvKind::Block, &[tip], None);
         Ok(BlockOutcome::Reorged { height: new_height, disconnected, connected })
     }
 

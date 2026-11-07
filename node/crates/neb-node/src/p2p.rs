@@ -78,10 +78,23 @@ struct PeerEntry {
     info: PeerInfo,
     writer: Arc<Mutex<TcpStream>>,
     started: Instant,
+    ip: std::net::IpAddr,
 }
 
+/// A write to a peer that takes longer ends the session: a peer that stops
+/// reading cannot hold a relaying thread longer than this.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+/// A peer that has not completed the handshake within this time is dropped.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+/// Slots kept for the outbound connections the node opens itself.
+const OUTBOUND_RESERVED: usize = 2;
+/// Inbound sessions accepted from one IP address (loopback excepted).
+const MAX_INBOUND_PER_IP: usize = 2;
+
 /// The connected sessions, at most `limit`; a session beyond the limit is
-/// closed at once. Never held while writing: `broadcast` copies the writers out.
+/// closed at once. Inbound sessions may use all but `OUTBOUND_RESERVED` slots,
+/// at most `MAX_INBOUND_PER_IP` from one address. Never held while writing:
+/// `broadcast` copies the writers out.
 pub struct PeerSet {
     limit: usize,
     next_id: AtomicU64,
@@ -93,11 +106,21 @@ impl PeerSet {
         PeerSet { limit, next_id: AtomicU64::new(1), peers: Mutex::new(BTreeMap::new()) }
     }
 
-    fn add(&self, address: String, inbound: bool, writer: Arc<Mutex<TcpStream>>) -> Option<u64> {
+    fn add(&self, peer: SocketAddr, inbound: bool, writer: Arc<Mutex<TcpStream>>) -> Option<u64> {
         let mut peers = self.peers.lock().expect("peer lock");
         if peers.len() >= self.limit {
             return None;
         }
+        if inbound {
+            let inbound_count = peers.values().filter(|e| e.info.inbound).count();
+            let same_ip = peers.values().filter(|e| e.info.inbound && e.ip == peer.ip()).count();
+            if inbound_count + OUTBOUND_RESERVED.min(self.limit - 1) >= self.limit
+                || (!peer.ip().is_loopback() && same_ip >= MAX_INBOUND_PER_IP)
+            {
+                return None;
+            }
+        }
+        let address = peer.to_string();
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         peers.insert(
             id,
@@ -114,6 +137,7 @@ impl PeerSet {
                 },
                 writer,
                 started: Instant::now(),
+                ip: peer.ip(),
             },
         );
         Some(id)
@@ -165,10 +189,17 @@ impl PeerSet {
     }
 }
 
+/// Writes one frame. A write that fails or exceeds `WRITE_TIMEOUT` shuts the
+/// socket down, which ends the session, so later writes to it fail at once.
+// ponytail: one blocking write per peer on the caller's thread; a per-peer queue with its own writer thread removes
+// even the single WRITE_TIMEOUT wait when many peers stall at once.
 fn write_all(writer: &Arc<Mutex<TcpStream>>, frame: &[u8]) -> io::Result<()> {
     let mut stream = writer.lock().expect("peer writer");
-    stream.write_all(frame)?;
-    stream.flush()
+    let result = stream.write_all(frame).and_then(|()| stream.flush());
+    if result.is_err() {
+        let _ = stream.shutdown(std::net::Shutdown::Both);
+    }
+    result
 }
 
 fn command_bytes(command: &str) -> Result<[u8; 12], String> {
@@ -455,7 +486,8 @@ impl Node {
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(50));
                     }
-                    Err(_) => break,
+                    // A transient error (too many open files, a reset connection) must not stop the listener.
+                    Err(_) => thread::sleep(Duration::from_millis(200)),
                 }
             }
         });
@@ -490,15 +522,16 @@ fn send_getblocks(node: &Node, writer: &Arc<Mutex<TcpStream>>) {
 
 fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: SocketAddr) {
     let _ = stream.set_nodelay(true);
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
+    let _ = stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
     let writer = match stream.try_clone() {
         Ok(s) => Arc::new(Mutex::new(s)),
         Err(_) => return,
     };
-    let address = peer_addr.to_string();
-    let Some(peer_id) = node.peers.add(address, inbound, writer.clone()) else {
+    let Some(peer_id) = node.peers.add(peer_addr, inbound, writer.clone()) else {
         return;
     };
+    let opened = Instant::now();
     let magic = node.network().magic;
     let version = VersionMsg {
         protocol: node.network().protocol_version,
@@ -523,6 +556,9 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: Socke
     // True from a keep-alive ping until the next message of any kind.
     let mut ping_unanswered = false;
     'session: loop {
+        if !handshake_done && opened.elapsed() > HANDSHAKE_TIMEOUT {
+            break;
+        }
         let message = match read_message(&mut stream, magic) {
             Ok(Some(m)) => {
                 ping_unanswered = false;
@@ -563,6 +599,7 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: Socke
             }
             CMD_VERACK => {
                 handshake_done = true;
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
                 node.peers.update(peer_id, |info| info.handshake = true);
                 send_getblocks(&node, &writer);
             }
@@ -711,35 +748,4 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: Socke
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn pair() -> (TcpStream, TcpStream) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (server, _) = listener.accept().unwrap();
-        server.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
-        (client, server)
-    }
-
-    // A timeout before the first byte is idle; a timeout inside a header or payload is a framing error.
-    #[test]
-    fn a_timeout_inside_a_message_is_not_idle() {
-        let magic = [1, 2, 3, 4];
-        let (_quiet, mut server) = pair();
-        let err = read_message(&mut server, magic).err().expect("timeout");
-        assert!(matches!(err.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut));
-
-        let frame = encode_message(magic, CMD_PING, &[0u8; 8]).unwrap();
-        for cut in [10, HEADER_BYTES + 3] {
-            let (mut client, mut server) = pair();
-            client.write_all(&frame[..cut]).unwrap();
-            let err = read_message(&mut server, magic).err().expect("timeout");
-            assert_eq!(err.kind(), io::ErrorKind::InvalidData, "cut at {cut}");
-        }
-
-        let (mut client, mut server) = pair();
-        client.write_all(&frame).unwrap();
-        assert_eq!(read_message(&mut server, magic).unwrap().unwrap().command, CMD_PING);
-    }
-}
+mod tests;

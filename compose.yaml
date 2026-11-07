@@ -33,7 +33,7 @@ services:
       NEB_MINER_ADDRESS: ${NEB_MINER_ADDRESS:?set NEB_MINER_ADDRESS to the neb1 address that receives the rewards}
       NEB_SEEDS: ${NEB_SEEDS:-}
       NEB_MAX_PEERS: ${NEB_MAX_PEERS:-}
-      NEB_DATASET_URL: ${NEB_DATASET_URL:-https://github.com/SilasEigen/neb/releases/download/v0.2.0/neb-datasets.bin}
+      NEB_DATASET_URL: ${NEB_DATASET_URL:-https://github.com/SilasEigen/neb/releases/download/v0.2.1/neb-datasets.bin}
     volumes:
       - neb-data:/data
     tmpfs:

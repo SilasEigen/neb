@@ -4,6 +4,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/). The protocol version and the genesis of the network are listed separately from
 the software version: a node checks them, not the software version.
 
+## [0.2.1] - 2026-11-07
+
+Same protocol (3), network and genesis as 0.2.0: nodes of both versions work together. Operators of a node that serves
+miners should upgrade.
+
+- Work service: when no job went to the miners for 30 s, the node sends them a fresh job on the same tip. A job holds
+  2^32 nonces, which a fast GPU tries in about two minutes; a miner that had tried them all stopped until the next
+  block. Job pushes are serialized, so a job on an older tip never reaches the miners after one on a newer tip.
+
 ## [0.2.0] - 2026-11-07
 
 Protocol 3 and a new test network. The chain trains one model per dataset: two 784-128-10 models on public scientific

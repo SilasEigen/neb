@@ -55,7 +55,7 @@ The volume `neb-data` holds the dataset file (`/data/neb-datasets.bin`) and the 
 ```bash
 docker volume create neb-data
 docker run -d --name neb-node --init -p 3440:3440 -v neb-data:/data \
-  -e NEB_MINER_ADDRESS=neb1... -e NEB_DATASET_URL=https://github.com/SilasEigen/neb/releases/download/v0.2.0/neb-datasets.bin \
+  -e NEB_MINER_ADDRESS=neb1... -e NEB_DATASET_URL=https://github.com/SilasEigen/neb/releases/download/v0.2.1/neb-datasets.bin \
   neb-node:local
 docker run -d --name neb-miner --init --network container:neb-node -v neb-data:/data:ro neb-miner-cpu:local
 ```

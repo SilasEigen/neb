@@ -31,7 +31,7 @@ neb-miner-cpu --node 127.0.0.1:3441 --dataset /path/to/neb-datasets.bin --thread
 
 The node refuses to start when the dataset file does not have the pinned hash. The miner shows a dashboard (see "Dashboard of the miners") or, with `--plain`, a status line every 5 s: attempts per second, shares, and blocks found (accepted and rejected by the node). An attempt meets the genesis target with probability 2^-20 and the share target with probability 2^-15, so the expected time to a block is 2^20 divided by the attempt rate, and a block comes with about 32 shares. The shares of a block train the model one block later.
 
-`neb-node --model-accuracy --dataset FILE --datadir DIR` replays the chain of a stopped node and prints how many of the first 2000 samples the initial model and the chain model classify correctly (`--samples N` changes the count; a value that is not a non-negative integer is a usage error with exit status 2).
+`neb-node --model-accuracy --dataset FILE --datadir DIR` replays the chain of a stopped node and prints, for each model, how many of the first 2000 samples of its dataset the initial model and the chain model classify correctly (`--samples N` changes the count; a value that is not a non-negative integer is a usage error with exit status 2).
 
 ## Network parameters
 
@@ -43,7 +43,7 @@ The node refuses to start when the dataset file does not have the pinned hash. T
 | work service port | 3441, loopback only |
 | JSON-RPC port | 8432, loopback only |
 | software version | 0.2.0 |
-| protocol version | 2 (a node of protocol 1, the first share rule, does not connect) |
+| protocol version | 3 (one model per dataset; a node of protocol 2 or 1 does not connect) |
 | network magic | `1db70ba3` (four bytes, hex) |
 | default maximum peers | 8 (`--max-peers`) |
 | genesis timestamp | 1794078000 (2026-11-07 19:00:00 UTC) |

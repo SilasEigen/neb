@@ -190,7 +190,7 @@ The node serves miners on a loopback TCP port. Binary frames, little-endian: `le
 | 4 | Submit | miner to node | `job id (u64) || extranonce (varint length, bytes) || time (u32) || nonce (u32)` |
 | 5 | Result | node to miner | `accepted (u8, 1 or 0) || code (u8)` |
 | 6 | Share | miner to node | `job id (u64) || nonce (u32)` |
-| 7 | Model | node to miner | `weights_hash (32) || packed weights (50 816 bytes)` |
+| 7 | Model | node to miner | `slot (u8) || weights_hash (32) || packed weights (50 816 bytes)` (`spec/shares.md` section 11.5) |
 
 A Job carries, in this order: `id (u64)`, `clean (u8, 0 or 1)`, `version (u32)`, `parent (32)`, `time_start (u32)`, `time_window (u32)`, `bits (u32)`, `target (32)`, `share_target (32)`, `coinbase_prefix (varint length, bytes)`, `coinbase_suffix (varint length, bytes)`, `extranonce_size (u8, 1 to 32)`, `branch (varint count of at most 4096, then 32 bytes each)`, `tx_count (u32, at least 1)`, `shares_root (32)`, `height (u32)`, `expiry (u32)`.
 

@@ -66,7 +66,7 @@ What matters for a miner:
 
 ## Pools and dev fee
 
-Today a miner talks to a node, solo, and the job pays the lock that the node operator chose with `--miner-lock`. There is no pool protocol yet. The reference pool, open source and with a stratum-style protocol where the payout address is in the login, is on the roadmap for Q4 2026; that is where a per-algorithm dev fee fits. Its specification will be added to this page.
+Today a miner talks to a node, solo, and the job pays the lock that the node operator chose with `--miner-lock`. The pool protocol is specified in `spec/pool.md`: JSON lines in the style of stratum, the payout address in the login, and no change to the node or the consensus. A miner with a dev fee authorizes its own login in the same session and submits that part of its attempts under it. The reference pool, open source, is on the roadmap for Q4 2026.
 
 A share on NEB is bound to the parent block, not to the header (`spec/shares.md` section 11.2): a miner can change job, extranonce or time at any moment without losing the shares it found, and the shares of every miner train the model, whoever finds the block.
 
@@ -74,6 +74,7 @@ A share on NEB is bound to the parent block, not to the header (`spec/shares.md`
 
 - Code: https://github.com/SilasEigen/neb
 - Specification: https://github.com/SilasEigen/neb/blob/main/spec/shares.md
+- Pool protocol: https://github.com/SilasEigen/neb/blob/main/spec/pool.md
 - Running a node and a miner: https://github.com/SilasEigen/neb/blob/main/docs/testnet.md
 - Explorer: https://neuralenginebyte.org/#/explorer
 - Discord: https://discord.gg/B6dTbScw8

@@ -13,8 +13,9 @@ and a copy of the model weights.
 
 ## Status
 
-One transit candidate, **KIC 6691030**, with two warning flags. It is not a confirmed planet. A planet would need
-high-resolution imaging, spectroscopy and a statistical validation by astronomers. See [Candidate](#candidate-kic-6691030).
+One transit candidate, **KIC 6691030**, with two warning flags. It is not a confirmed planet, and an eclipsing
+binary or a triple star is not excluded. A planet would need high-resolution imaging, a transit depth in a second
+band and a statistical validation by astronomers. See [Candidate](#candidate-kic-6691030).
 
 ## Data and credit
 
@@ -50,7 +51,16 @@ with the oracle of `pow/oracle`.
 3. **Vetting** (`vet.py`), in the order of the Kepler pipeline: MES at least 7.1, at least 3 transits, no single
    event dominating, most events are dips, odd and even depths within 3 sigma, no secondary eclipse above 3 sigma,
    duration at most 1.5 times the longest central transit for a star of density 2 (solar units), depth at most 20 %.
-   The noise is measured on the light curve averaged over the transit duration, so red noise counts.
+   The noise is measured on the light curve averaged over the transit duration, so red noise counts. Two more tests:
+   - **Depth by Kepler season.** Kepler rolled every quarter, so quarters 4 apart share a pointing. A planet blocks
+     the same fraction of its star in every season; another star blended in the photometry does not. A signal fails
+     when two seasons differ by more than 4 sigma and the deepest season is more than twice the shallowest. The
+     ratio threshold comes from known planets: in Kepler Bonus PSF light curves their deepest/shallowest season
+     ratio has a median of 1.31 and reaches 1.98 (50 planets of `check_vet.py`), so a ratio alone is no proof.
+   - **Transit shape.** The best free trapezoid is compared with the best transit a planet (radius ratio up to
+     0.25, depth tied to its size) can make around a star of density at least 2; a signal fails when that costs a
+     delta chi2 above 9, red noise included. A V-shaped dip that lasts nearly the longest central transit needs an
+     object almost as large as the star. The 29.4-minute cadence blurs ingress and egress, so the test is weak.
 4. **Model.** A signal that passes the vetting with a model score of at least 4 is a survivor.
 5. **Control.** Every star is searched again with its flux inverted. Inverted survivors show what noise alone lets
    through; only real survivors above the strongest inverted one are studied further.
@@ -71,8 +81,10 @@ on the NASA DV light curve and on the Kepler Bonus light curve of the same signa
 The model works on Kepler Bonus light curves at least as well as on the kind it was trained on. It sorts signals that
 are already detected; it does not separate noise from transits on its own, hence the search and vetting before it.
 
-**Vetting** (`check_vet.py`), on the same signals at their catalog ephemeris (duration test left out, these hosts are
-not M dwarfs): 39 of 59 planets pass, 4 of 57 false positives pass.
+**Vetting** (`check_vet.py`), on the same signals at their catalog ephemeris, with a density floor of 0.1 solar for
+the duration and shape tests (these hosts are mostly FGK stars, not M dwarfs): 41 of 59 planets pass and 1 of 57
+false positives. Without the season and shape tests, 44 planets and 3 false positives pass: the two tests remove 2
+of the 3 false positives and 3 of the 44 planets.
 
 **Blind recovery** (`check_bls.py`): on the 40 planets of the calibration set with P < 20 days, the search finds the
 known period (or half or twice it) for 22, and another known signal of the same star for 12 more. Of the 17 confirmed
@@ -92,9 +104,21 @@ memory, and the rest used the block normalisation now in `vet.py`. A rerun of th
 differ slightly; the three leads below give the same period, MES and score with it.
 
 Up to MES 20 the real survivors are not clearly above the control. The strongest inverted survivor has MES 23.0;
-three real ones are above it:
+three real ones are above it.
 
-- `kic-009966110`, P = 8.9474 d: a known false positive, KOI K06075.01, 15 arcsec away, same period. Rejected.
+The season and shape tests came after the hunt. `revet.py` applies them to its survivors at their stored ephemeris
+(`results/revet.csv`):
+
+| MES at least | 7.1 | 8 | 10 | 15 | 20 | 30 |
+|---|---|---|---|---|---|---|
+| real, before / after | 57 / 14 | 36 / 5 | 9 / 2 | 4 / 2 | 4 / 2 | 2 / 1 |
+| inverted, before / after | 41 / 13 | 21 / 2 | 9 / 0 | 3 / 0 | 2 / 0 | 0 / 0 |
+
+Noise does not give the same depth in every season, so the season test removes most of the control (39 real and
+26 inverted survivors fail it). Above MES 10 two real signals remain and no inverted one. The three leads:
+
+- `kic-009966110`, P = 8.9474 d: a known false positive, KOI K06075.01, 15 arcsec away, same period. Rejected; the
+  season test now rejects it too (ratio 3.4, 31 sigma), as expected from a blend.
 - `kic-009151544`, P = 1.8835 d, depth 2.2 %: seen in one quarter of target pixel data, on the star, but about
   9 Earth radii if the dip is on it; a stellar or brown-dwarf companion is more likely. Low priority.
 - `kic-006691030`, P = 4.7720 d: the candidate below.
@@ -131,15 +155,27 @@ Warning flags (`candidate.py`):
 An eclipsing binary, grazing or blended within 2 arcsec, is not excluded. The vetting sheet is
 `results/candidate-kic-006691030.png`.
 
+Later checks:
+
+- **Season test:** deepest/shallowest season ratio 1.72 at 6.3 sigma. Known planets in Kepler Bonus light curves
+  reach the same ratio, so the signal passes; the seasonal change stays unexplained.
+- **Shape test:** delta chi2 = 0.2 at the M dwarf floor and 0.5 at the TIC density. At the Kepler cadence the data
+  do not separate a U from a V for this dip.
+- **Catalogs:** the star is in no Gaia DR3 variability table (`phot_variable_flag` NOT_AVAILABLE, `non_single_star`
+  0), and VSX lists no variable star within 30 arcsec.
+- **TESS:** the star was observed in sectors 14, 40, 41, 54, 55, 74, 75, 81 and 82, but the G = 12.7 neighbour,
+  about 90 times brighter, falls in the same 21-arcsec TESS pixel; the dip would be diluted to a few tens of ppm.
+
 ## Running it
 
-Python 3.10 or later.
+Python 3.12 or later (numpy 2.5).
 
 ```
 pip install -r requirements.txt
 python fetch_model.py              # optional: current weights; the results use results/neb-kepler-block1428.npz
 python hunt.py --start 300 --n 2000
 python analyze.py
+python revet.py                    # season and shape tests on the survivors of a hunt made before them
 python deep.py kic-006691030
 python neighbors.py kic-006691030
 python tpf.py kic-006691030
@@ -167,6 +203,7 @@ survive. The bulk download list of Kepler Bonus (175 MB) is fetched once.
 | `figure.py` | figure of a known planet recovered blind |
 | `hunt.py` | the hunt, with the inverted control |
 | `analyze.py` | survivors against the control, known KOIs nearby |
+| `revet.py` | the season and shape tests on the survivors of `results/hunt.csv` |
 | `deep.py`, `neighbors.py`, `tpf.py` | follow-up of a lead |
 | `candidate.py` | transit fit, density, phase curve, vetting sheet |
 | `results/` | the outputs used above and the model weights at block 1428 |

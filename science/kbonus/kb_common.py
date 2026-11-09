@@ -144,9 +144,10 @@ def mstar_positions():
 
 
 # --- light curves --------------------------------------------------------------------------------------------------
-def read_lc(path, window=2.0):
+def read_lc(path, window=2.0, quarters=False):
     """time and relative flux (0 = median) of a Kepler Bonus light curve: good cadences (Kepler quality mask 175),
-    each quarter divided by a running median of `window` days, computed on 0.25-day bin medians and interpolated"""
+    each quarter divided by a running median of `window` days, computed on 0.25-day bin medians and interpolated.
+    With quarters=True, also the Kepler quarter of each point."""
     from astropy.io import fits
     with fits.open(path, memmap=False) as h:
         d = h["LIGHTCURVE_STITCHED"].data
@@ -173,4 +174,4 @@ def read_lc(path, window=2.0):
         half = int(round(window / 0.25 / 2))
         trend = np.array([np.median(meds[max(0, i - half):i + half + 1]) for i in range(meds.size)])
         rel[m] = fq / np.interp(tq, centers, trend) - 1.0
-    return t, rel
+    return (t, rel, q.astype(int)) if quarters else (t, rel)

@@ -1,0 +1,99 @@
+source,side,mes,score,season_sigma,season_ratio,shape_dchi2,fail
+kic-005021279,real,8.7,5,8.9,35.26,,depth changes with the season
+kic-005021033,inv,10.7,11,10.0,72.23,,depth changes with the season
+kic-008508754,inv,7.3,9,2.4,2.32,-0.1,
+kic-004572628,real,8.2,12,,,4.1,
+kic-009933511,real,8.1,4,9.1,inf,,depth changes with the season
+kic-006307311,inv,7.5,15,3.1,2.36,-0.0,
+kic-006186150,real,7.3,4,1.4,1.52,-0.0,
+kic-002021490,real,7.2,10,3.2,4.29,-0.0,
+kic-008236019,inv,9.8,6,13.8,17.72,,depth changes with the season
+kic-004263880,real,7.7,5,1.9,1.69,-0.0,
+kic-010797363,inv,10.6,4,12.4,158.86,,depth changes with the season
+kic-004359398,inv,21.3,8,11.5,15.62,,depth changes with the season
+kic-002443142,inv,13.7,6,28.0,inf,,depth changes with the season
+kic-004282770,real,8.2,15,,,16.7,shape needs a larger object
+kic-009651643,inv,7.7,15,3.2,3.73,0.1,
+kic-008775687,inv,8.2,4,5.7,22.92,,depth changes with the season
+gaia-dr3-2073606297813725312,real,7.2,4,0.7,1.24,16.5,shape needs a larger object
+kic-009489496,inv,7.6,4,2.4,2.19,-0.1,
+kic-007534013,real,11.2,15,7.8,11.18,,depth changes with the season
+kic-007202043,real,7.3,15,4.2,10.8,,depth changes with the season
+gaia-dr3-2077223622333207296,real,8.0,6,4.5,3.6,,depth changes with the season
+kic-009968920,inv,7.7,4,5.9,6.91,,depth changes with the season
+kic-004367817,inv,9.9,5,7.3,6.53,,depth changes with the season
+kic-010191815,real,7.7,7,6.0,inf,,depth changes with the season
+kic-005648843,real,7.1,8,5.2,18.46,,depth changes with the season
+kic-005979492,inv,9.2,6,5.2,8.34,,depth changes with the season
+kic-005534492,real,8.4,15,6.1,35.87,,depth changes with the season
+kic-002718309,inv,11.1,15,13.9,53.17,,depth changes with the season
+gaia-dr3-2079610765154934784,real,8.1,10,6.4,6.78,,depth changes with the season
+kic-006070156,real,7.1,8,2.3,2.66,-0.0,
+kic-011178085,inv,7.5,4,6.4,24.11,,depth changes with the season
+kic-003853521,real,7.5,8,4.9,6.9,,depth changes with the season
+kic-007299895,inv,13.3,10,21.6,27.37,,depth changes with the season
+kic-003633416,inv,7.7,8,1.4,1.41,0.5,
+kic-003123387,inv,7.5,15,2.8,2.82,1.3,
+kic-012735959,real,7.7,6,9.6,13.28,,depth changes with the season
+kic-009151544,real,29.6,14,0.1,1.01,0.0,
+kic-006143049,real,7.8,9,5.4,6.02,,depth changes with the season
+kic-007777822,real,21.6,14,18.8,88.6,,depth changes with the season
+kic-007092234,inv,7.6,5,8.6,inf,,depth changes with the season
+kic-009216791,real,8.4,4,6.4,11.43,,depth changes with the season
+kic-004569568,real,8.0,9,6.4,4.41,,depth changes with the season
+kic-005706016,real,7.1,11,3.3,6.64,0.4,
+kic-007302981,real,8.1,5,5.1,9.73,,depth changes with the season
+kic-011443992,inv,7.6,6,4.6,28.39,,depth changes with the season
+kic-004373567,real,7.4,6,5.8,5.8,,depth changes with the season
+kic-008622278,real,9.8,4,8.7,25.69,,depth changes with the season
+kic-005273721,real,8.8,10,5.9,8.8,,depth changes with the season
+gaia-dr3-2051940107641215232,inv,16.5,15,8.6,3.13,,depth changes with the season
+kic-005195549,inv,23.0,9,6.3,1.99,41.9,shape needs a larger object
+kic-007870360,real,10.0,10,7.6,6.23,,depth changes with the season
+kic-008843800,inv,7.7,8,3.7,6.74,3.6,
+kic-005207475,real,8.7,10,8.4,inf,,depth changes with the season
+kic-006923166,real,8.3,4,4.5,10.01,,depth changes with the season
+kic-006923166,inv,8.9,11,4.7,6.7,,depth changes with the season
+kic-006127805,real,9.5,9,8.5,12.12,,depth changes with the season
+kic-005697557,inv,7.4,8,7.5,14.17,,depth changes with the season
+kic-007175823,real,7.7,14,7.5,14.89,,depth changes with the season
+kic-009244126,real,8.2,13,4.2,8.84,,depth changes with the season
+kic-009966110,real,63.8,8,31.2,3.4,,depth changes with the season
+kic-003228838,real,9.6,8,,,24.2,shape needs a larger object
+kic-003228838,inv,8.8,14,,,2.2,
+kic-002575216,inv,7.6,12,5.8,10.57,,depth changes with the season
+kic-009289458,real,9.4,4,5.5,9.03,,depth changes with the season
+kic-002991651,inv,8.5,4,6.6,56.76,,depth changes with the season
+kic-008936381,real,12.1,13,5.7,4.19,,depth changes with the season
+kic-003642356,real,7.1,6,5.0,6.86,,MES below 7.1
+kic-010969670,real,7.6,14,6.8,inf,,depth changes with the season
+kic-011809980,real,7.8,14,3.2,3.89,0.0,
+kic-006670516,real,8.3,8,1.8,2.34,0.0,
+gaia-dr3-2105351912911126144,inv,11.7,8,6.7,5.48,,depth changes with the season
+kic-003438627,inv,7.6,5,,,3.6,
+kic-007954614,inv,7.3,6,3.8,21.48,-0.0,
+kic-002851398,inv,8.2,6,8.0,19.99,,depth changes with the season
+kic-006691030,real,30.9,8,6.3,1.72,0.2,
+kic-005212387,real,7.5,12,1.8,2.07,2.8,
+kic-009156396,real,8.9,14,5.4,15.01,,depth changes with the season
+kic-008332009,real,8.3,5,4.4,10.61,,depth changes with the season
+kic-006276924,inv,7.5,4,1.1,1.43,2.3,
+gaia-dr3-2076065630432841728,real,10.9,15,11.0,27.07,,depth changes with the season
+kic-006381424,real,9.9,15,5.7,inf,,depth changes with the season
+kic-004355607,real,8.3,6,13.8,inf,,depth changes with the season
+kic-003561605,real,7.4,6,4.7,39.9,,depth changes with the season
+gaia-dr3-2127406806198629760,inv,8.8,4,6.2,40.02,,depth changes with the season
+kic-009077383,real,8.6,7,6.0,inf,,depth changes with the season
+kic-005295391,real,12.4,5,24.6,inf,,depth changes with the season
+kic-006525659,real,7.5,10,2.9,3.23,6.5,
+kic-009465726,inv,7.3,5,4.5,inf,,depth changes with the season
+kic-006365767,real,7.3,14,3.7,7.96,5.6,
+kic-011087077,inv,8.0,6,,,2.3,
+kic-010471400,inv,9.0,4,8.2,13.47,,depth changes with the season
+kic-008743104,real,9.5,5,4.5,3.14,,depth changes with the season
+kic-008265189,inv,7.1,5,4.2,59.46,,MES below 7.1
+kic-007019148,inv,7.2,9,6.7,43.57,,depth changes with the season
+gaia-dr3-2128391079555734400,real,9.6,4,8.0,22.78,,depth changes with the season
+kic-009643564,real,8.2,14,2.2,3.71,0.5,
+kic-009643564,inv,7.9,15,,,0.8,
+kic-008776039,inv,8.8,4,6.3,16.48,,depth changes with the season

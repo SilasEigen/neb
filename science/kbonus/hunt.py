@@ -23,14 +23,16 @@ import vet  # noqa: E402
 
 OUT = os.path.join(K.RESULTS, "hunt.csv")
 SCORE_MIN = 4
+VETTED = ("n_transits", "depth_ppm", "mes", "odd_even_sigma", "secondary_sigma", "season_sigma", "season_ratio", "shape_dchi2",
+          "fail")
 FIELDS = ["source", "points"] + ["%s_%s" % (tag, k) for tag in ("real", "inv") for k in (
-    "period", "t0", "dur_h", "n_transits", "depth_ppm", "mes", "odd_even_sigma", "secondary_sigma", "fail", "answer", "score")]
+    "period", "t0", "dur_h") + VETTED + ("answer", "score")]
 
 
 def one(job):
     src, path, model_path = job
     try:
-        t, f = K.read_lc(path)
+        t, f, q = K.read_lc(path, quarters=True)
     except Exception as e:
         return {"source": src, "points": -1, "real_fail": "unreadable: %s" % str(e)[:60]}
     if len(t) < 3000:
@@ -38,13 +40,14 @@ def one(job):
     w1, w2, _, _ = K.load_model(model_path)
     row = {"source": src, "points": len(t)}
     for tag, flux in (("real", f), ("inv", -f)):
-        tc, fc = vet.clean(t, flux)
+        keep = vet.clean_mask(t, flux)
+        tc, fc, qc = t[keep], flux[keep], q[keep]
         p, t0, dur = vet.search(tc, fc)
-        v = vet.vet(tc, fc, p, t0, dur)
+        v = vet.vet(tc, fc, p, t0, dur, quarter=qc)
         o = K.outputs(w1, w2, K.kepler_views(tc, fc, p, t0, dur * 24)[None])[0]
         row.update({tag + "_period": round(p, 5), tag + "_t0": round(t0, 4), tag + "_dur_h": round(dur * 24, 2),
                     tag + "_answer": int(o.argmax()), tag + "_score": int(o[1] - o[0])})
-        row.update({tag + "_" + k: v.get(k, "") for k in ("n_transits", "depth_ppm", "mes", "odd_even_sigma", "secondary_sigma", "fail")})
+        row.update({tag + "_" + k: v.get(k, "") for k in VETTED})
     return row
 
 
@@ -68,8 +71,10 @@ def main():
     todo = [b for b in batch if b[1] not in done]
     print("ranks %d..%d: %d stars, %d already done" % (a.start, a.start + a.n, len(batch), len(batch) - len(todo)), flush=True)
     new = not os.path.exists(OUT)
+    # a table written by an older version keeps its own columns, so appended rows stay aligned with its header
+    fields = FIELDS if new else next(csv.reader(open(OUT)))
     with open(OUT, "a", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=FIELDS, extrasaction="ignore")
+        w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
         if new:
             w.writeheader()
         for c in range(0, len(todo), a.chunk):

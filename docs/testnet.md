@@ -167,7 +167,7 @@ Both nodes must have the same genesis id; the node prints it at start. Options:
 
 ## Running a public relay
 
-A relay is a node that accepts many inbound peers; the nodes of the miners dial it. It needs no miner and no wallet. By estimate, two vCPUs and 2 GiB of RAM should be enough (not measured on a deployed relay): a block costs about 17 ms of one core to check, the node keeps the dataset (47 MB) and the model states (about 46 MB), and the traffic is small.
+A relay is a node that accepts many inbound peers; the nodes of the miners dial it. It needs no miner and no wallet. By estimate, two vCPUs and 2 GiB of RAM should be enough (not measured on a deployed relay): a block costs about 17 ms of one core to check, the node keeps the dataset (38 MB) and the model states (about 46 MB), and the traffic is small.
 
 ```
 neb-node --run --dataset /srv/neb/neb-datasets.bin --datadir /srv/neb/data --listen 0.0.0.0 --max-peers 256 --seed other-relay.example.org:3440 --color never

@@ -21,7 +21,7 @@ docker compose --profile gpu up -d        # also the GPU miner
 docker compose logs -f node miner
 ```
 
-On first start the node downloads the dataset file (47 MB) from the release page, checks it against the hash pinned in the network parameters, and replays its chain. The node is healthy when its JSON-RPC answers; the miners start after that.
+On first start the node downloads the dataset file (38 MB) from the release page, checks it against the hash pinned in the network parameters, and replays its chain. The node is healthy when its JSON-RPC answers; the miners start after that.
 
 The work service of the node (port 3441) listens on the loopback interface of its container, as it does on a host. The miners therefore share the network namespace of the node (`network_mode: "service:node"` in `compose.yaml`) and reach it at `127.0.0.1:3441`. Only the peer port 3440 is published.
 

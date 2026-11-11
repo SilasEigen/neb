@@ -1,5 +1,6 @@
 //! Tests of the share wrapper: vectors, model steps, packed weights and dataset files.
 
+use super::vectors::test_share_key;
 use super::*;
 
 fn vectors(name: &str) -> String {
@@ -157,4 +158,55 @@ fn a_dataset_file_round_trips_and_is_checked() {
     assert!(FileDataset::from_bytes(&bad_label).is_err());
     bytes[0] = b'X';
     assert!(FileDataset::from_bytes(&bytes).is_err());
+}
+
+#[test]
+fn nebhash2_vectors_replay_bit_exact() {
+    let (steps, shares) = replay_vectors2(&vectors("nebhash2.txt")).unwrap();
+    assert_eq!((steps, shares), (12, 174));
+    let mut bad = vectors("nebhash2.txt");
+    let at = bad.find("state 2 3").unwrap() + 20;
+    let c = if bad.as_bytes()[at] == b'0' { "1" } else { "0" };
+    bad.replace_range(at..at + 1, c);
+    assert!(replay_vectors2(&bad).is_err());
+}
+
+#[test]
+fn nebhash2_packed_weights_round_trip_and_datasets_parse() {
+    for arch in [Arch::Kep1, Arch::Ret2] {
+        let m = Model::from_seed_arch(arch, &[7u8; 32]);
+        assert_eq!(m.arch(), arch);
+        assert_eq!(m.weights().len(), arch.weights());
+        let back = Model::from_packed(arch, &m.packed_weights()).unwrap();
+        assert_eq!(back.weights_hash(), m.weights_hash());
+        assert!(Model::from_packed(arch, &m.packed_weights()[1..]).is_err());
+        // a NMD2 file of three samples, alone and inside a set with a v1 file
+        let ds = SyntheticDataset2::new(arch);
+        let mut file = b"NMD2".to_vec();
+        file.extend_from_slice(&arch.id().unwrap().to_le_bytes());
+        file.extend_from_slice(&3u32.to_le_bytes());
+        let mut x = vec![0u8; arch.nin()];
+        for i in 0..3 {
+            let label = ds.sample(i, &mut x);
+            file.extend_from_slice(&x);
+            file.push(label);
+        }
+        let parsed = FileDataset::from_bytes(&file).unwrap();
+        assert_eq!((parsed.n(), parsed.arch()), (3, arch));
+        let mut y = vec![0u8; arch.nin()];
+        assert_eq!(parsed.sample(2, &mut y), ds.sample(2, &mut x));
+        assert_eq!(x, y);
+        let mut v1 = b"NMD1".to_vec();
+        v1.extend_from_slice(&1u32.to_le_bytes());
+        v1.extend_from_slice(&[0u8; NIN + 1]);
+        let mut set = b"NMDS".to_vec();
+        set.extend_from_slice(&2u32.to_le_bytes());
+        set.extend_from_slice(&v1);
+        set.extend_from_slice(&file);
+        let both = datasets_from_bytes(&set).unwrap();
+        assert_eq!((both[0].arch(), both[1].arch()), (Arch::V1, arch));
+        let mut label2 = file.clone();
+        *label2.last_mut().unwrap() = 2;
+        assert!(FileDataset::from_bytes(&label2).is_err());
+    }
 }

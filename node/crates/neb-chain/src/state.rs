@@ -82,17 +82,15 @@ pub struct ChainParams {
     /// `lock_data` of the multisig lock that the project-share output must
     /// carry (spec/node.md section 6.3).
     pub project_share_lock: [u8; 32],
-    /// The datasets of the network, one per model slot (spec/shares.md
-    /// sections 4 and 11.2); at least one.
+    /// The datasets of the network file (spec/shares.md section 11.6): one per model slot, in slot order, then one
+    /// per upgrade, in the order of `upgrades`. There are more datasets than upgrades.
     pub datasets: Vec<SharedDataset>,
+    /// The dataset upgrades of the network, by increasing height (spec/shares.md section 11.7); empty on a network
+    /// that never changed a dataset.
+    pub upgrades: Vec<Upgrade>,
 }
 
-impl ChainParams {
-    /// The dataset of the model a block of height `height` works on.
-    pub fn dataset_at(&self, height: u32) -> &SharedDataset {
-        &self.datasets[slot(height, self.datasets.len())]
-    }
-}
+pub use crate::upgrade::Upgrade;
 
 #[derive(Debug)]
 /// Why a block cannot be connected. Any of them makes the block invalid for
@@ -252,7 +250,7 @@ impl ChainState {
         let state = ChainState {
             chain_id: genesis.id(),
             verify_pow: true,
-            models: VecDeque::from([model::initial_models(&genesis.id(), params.datasets.len())]),
+            models: VecDeque::from([model::initial_models(&genesis.id(), params.slots())]),
             blocks: vec![genesis],
             undos: Vec::new(),
             utxos,
@@ -669,8 +667,7 @@ impl ChainState {
     /// proofs were checked when the blocks were connected, so targets are not
     /// compared. Cost: the gradients of every listed share of the chain.
     fn rebuild_models(&mut self) -> Result<(), ChainError> {
-        let mut models: VecDeque<Models> =
-            VecDeque::from([model::initial_models(&self.chain_id, self.params.datasets.len())]);
+        let mut models: VecDeque<Models> = VecDeque::from([model::initial_models(&self.chain_id, self.params.slots())]);
         for h in 1..self.blocks.len() {
             let p = models.back().expect("the genesis state is present").clone();
             let pp = if h >= 2 { models[models.len() - 2].clone() } else { p.clone() };

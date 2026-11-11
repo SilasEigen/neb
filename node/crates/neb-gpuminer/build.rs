@@ -1,5 +1,5 @@
 //! With the `cuda` feature, compiles the CUDA sources of `pow/gpu` with nvcc and links the CUDA runtime statically.
-//! `NEB_CUDA_ARCHS` lists the GPU generations as compute capabilities without the dot (default `75,86,89,120`); the
+//! `NEB_CUDA_ARCHS` lists the GPU generations as compute capabilities without the dot (default `75,86,89,90,120`); the
 //! last one also gets PTX for newer devices. dp4a needs 6.1 or later, and CUDA 13 builds for 7.5 or later.
 
 use std::path::Path;
@@ -12,7 +12,7 @@ fn main() {
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let (gpu, refdir) = (root.join("pow/gpu"), root.join("pow/ref"));
-    let archs = std::env::var("NEB_CUDA_ARCHS").unwrap_or_else(|_| "75,86,89,120".into());
+    let archs = std::env::var("NEB_CUDA_ARCHS").unwrap_or_else(|_| "75,86,89,90,120".into());
     let archs: Vec<&str> = archs.split(',').map(str::trim).filter(|a| !a.is_empty()).collect();
     // Two libraries, each with its own device link: the tensor-core kernels (shares_tc.cu) and the dp4a kernel
     // (shares_cuda.cu) must not be device-linked together. When they were (one library, one device link), the dp4a
@@ -38,12 +38,16 @@ fn main() {
         }
         b
     };
-    for h in ["scan_cuda.h", "shares_cuda.h", "shares_tc.h", "tc_common.cuh"] {
+    for h in ["scan_cuda.h", "shares_cuda.h", "shares_tc.h", "tc_common.cuh", "nebhash2_cuda.h"] {
         println!("cargo:rerun-if-changed={}", gpu.join(h).display());
     }
     println!("cargo:rerun-if-changed={}", refdir.join("shares.h").display());
+    println!("cargo:rerun-if-changed={}", refdir.join("nebhash2.h").display());
     build(&["scan_cuda.cu", "shares_cuda.cu"]).compile("neb_gpu");
     build(&["shares_tc.cu"]).compile("neb_gpu_tc");
+    // nebhash v2 (spec/nebhash-v2.md): its own library; the architecture table comes from pow/ref/nebhash2.c, which
+    // neb-pow compiles in.
+    build(&["nebhash2_cuda.cu"]).compile("neb_gpu2");
     if let Some(cuda) = std::env::var_os("CUDA_PATH") {
         let lib = if cfg!(windows) { "lib/x64" } else { "lib64" };
         println!("cargo:rustc-link-search=native={}", Path::new(&cuda).join(lib).display());

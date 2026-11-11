@@ -21,14 +21,17 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use neb_cpuminer::dashboard::{self, Hardware, Info, Outcome};
-use neb_gpuminer::cuda::{self, CudaScanner};
+use neb_gpuminer::cuda::{self, Cuda2Scanner, CudaScanner};
 use neb_gpuminer::{
     BATCH, Fallback, GpuKernel, Lane, Scanner, flatten, spawn_worker_with_fallback, stats, telemetry, unpack_weights,
 };
-use neb_pow::shares::{Dataset, Model, SharedDataset, SyntheticDataset, load_datasets};
+use neb_pow::shares::{Arch, Dataset, Model, SharedDataset, SyntheticDataset, load_datasets};
 
 /// Nonces a scan can report; a round has about 32 shares per block, so this is far above the need.
 const MAX_HITS: u32 = 4096;
+/// Nonces per scan of the v2 kernels: an attempt costs tens to hundreds of times a v1 attempt, so a smaller batch keeps
+/// the time to take a new job at a few seconds.
+const BATCH_V2: u32 = 1 << 14;
 
 fn usage() -> i32 {
     eprintln!(
@@ -80,7 +83,7 @@ fn choose_kernel(device: usize, requested: GpuKernel, dataset: &dyn Dataset) -> 
     }
 }
 
-type DeviceSetup = (CudaScanner, Option<Fallback>, GpuKernel);
+type DeviceSetup = (Box<dyn Scanner>, Option<Fallback>, GpuKernel);
 
 fn open_all(
     devices: &[usize],
@@ -104,7 +107,25 @@ fn open_all(
                         .map(|s| Box::new(s) as Box<dyn Scanner>)
                 }) as Fallback
             });
-            Ok((scanner, fallback, kernel))
+            Ok((Box::new(scanner) as Box<dyn Scanner>, fallback, kernel))
+        })
+        .collect()
+}
+
+/// The v2 kernel on every device for a dataset of a v2 architecture (spec/nebhash-v2.md), after its self-test. There
+/// is no other kernel to fall back to: the CPU check of every reported nonce stays.
+fn open_all_v2(devices: &[usize], dataset: &dyn Dataset) -> Result<Vec<DeviceSetup>, String> {
+    devices
+        .iter()
+        .map(|&d| {
+            let name = cuda::device_name(d).unwrap_or_default();
+            let summary = cuda::kernel2_selftest(d, dataset).map_err(|e| {
+                format!("device {d} ({name}): the {} kernel self-test FAILED: {e}", dataset.arch().name())
+            })?;
+            eprintln!("neb-miner-gpu: device {d} ({name}): {} self-test passed: {summary}", dataset.arch().name());
+            let model = Model::from_seed_arch(dataset.arch(), &[0u8; 32]);
+            let scanner = Cuda2Scanner::open(d, dataset, &model, BATCH_V2, MAX_HITS)?;
+            Ok((Box::new(scanner) as Box<dyn Scanner>, None, GpuKernel::K0))
         })
         .collect()
 }
@@ -192,7 +213,12 @@ fn run(args: &[String]) -> i32 {
     // per dataset, one scanner per device; then regrouped per device, one lane per dataset
     let mut per_dataset = Vec::with_capacity(datasets.len());
     for d in &datasets {
-        match open_all(&devices, &**d, requested.unwrap_or(GpuKernel::K0), &Model::from_seed(&[0u8; 32])) {
+        let setups = if d.arch() == Arch::V1 {
+            open_all(&devices, &**d, requested.unwrap_or(GpuKernel::K0), &Model::from_seed(&[0u8; 32]))
+        } else {
+            open_all_v2(&devices, &**d)
+        };
+        match setups {
             Ok(s) => per_dataset.push(s),
             Err(e) => {
                 eprintln!("{e}");
@@ -204,7 +230,7 @@ fn run(args: &[String]) -> i32 {
     let mut lanes: Vec<Vec<Lane>> = devices.iter().map(|_| Vec::new()).collect();
     for (d, setups) in datasets.iter().zip(per_dataset) {
         for (device, (scanner, fallback, _)) in setups.into_iter().enumerate() {
-            lanes[device].push(Lane { dataset: d.clone(), scanner: Box::new(scanner), fallback });
+            lanes[device].push(Lane { dataset: d.clone(), scanner, fallback });
         }
     }
     let mismatches = Arc::new(AtomicU64::new(0));
@@ -288,6 +314,21 @@ fn run(args: &[String]) -> i32 {
 
 /// For each device and each kernel (all three, or the requested one): the self-test of `cuda::kernel_selftest`.
 fn self_test(devices: &[usize], requested: Option<GpuKernel>, dataset: &dyn Dataset) -> i32 {
+    if dataset.arch() != Arch::V1 {
+        let mut failed = false;
+        for &device in devices {
+            let name = cuda::device_name(device).unwrap_or_default();
+            match cuda::kernel2_selftest(device, dataset) {
+                Ok(summary) => println!("device {device} {name}: {}: {summary}: PASSED", dataset.arch().name()),
+                Err(e) => {
+                    println!("device {device} {name}: {}: DIFFERENT from the C reference: {e}", dataset.arch().name());
+                    failed = true;
+                }
+            }
+        }
+        println!("{}", if failed { "SELFTEST FAILED" } else { "SELFTEST PASSED" });
+        return i32::from(failed);
+    }
     let kernels = requested.map_or(vec![GpuKernel::K0, GpuKernel::K1, GpuKernel::K2], |k| vec![k]);
     let mut failed = false;
     for &device in devices {

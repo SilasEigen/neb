@@ -14,7 +14,7 @@ use neb_block::Header;
 use neb_chain::block::body_root_of;
 use neb_chain::tx::h;
 use neb_codec::{Reader, write_varint};
-use neb_pow::shares::{Model, PACKED_WEIGHTS};
+use neb_pow::shares::{Arch, Model};
 
 /// Frame types of spec/node.md section 7.1 (miner to node: 1, 4, 6; node to
 /// miner: 2, 5, 7).
@@ -393,12 +393,12 @@ impl ShareMsg {
     }
 }
 
-/// The model frame: `slot (1) || weights_hash (32) || packed weights (50 816 bytes)`
-/// (spec/shares.md section 11.5): the slot of the model, which names the dataset the
-/// attempts use, then the 4-bit weights of both layers, packed. The node sends it
-/// before every job. Residuals are not sent.
+/// The model frame: `slot (1) || weights_hash (32) || packed weights` (spec/shares.md section 11.5,
+/// spec/nebhash-v2.md section 6): the index of the dataset the attempts use, then the 4-bit weights of every layer,
+/// packed (50 816 bytes for the v1 network, 13 000 for KEP1, 11 140 for RET2). The node sends it before every job.
+/// Residuals are not sent.
 pub fn model_frame(slot: u8, model: &Model) -> Vec<u8> {
-    let mut out = Vec::with_capacity(1 + 32 + PACKED_WEIGHTS);
+    let mut out = Vec::with_capacity(1 + 32 + model.arch().packed_bytes());
     out.push(slot);
     out.extend_from_slice(&model.weights_hash());
     out.extend_from_slice(&model.packed_weights());
@@ -409,11 +409,12 @@ pub fn model_frame(slot: u8, model: &Model) -> Vec<u8> {
 /// Fails when the size is wrong or the weights do not hash to the announced
 /// `weights_hash`. The node is trusted, so the hash detects a damaged or
 /// truncated frame, not a forged one.
+/// The size of the packed weights names the architecture; the miner checks that it is the one of the dataset.
 pub fn decode_model(p: &[u8]) -> Result<(u8, Model), FrameError> {
-    if p.len() != 1 + 32 + PACKED_WEIGHTS {
-        return Err(FrameError::BadShape("model frame has the wrong size".into()));
-    }
-    let model = Model::from_packed_weights(&p[33..]).map_err(FrameError::BadShape)?;
+    let packed = p.len().saturating_sub(33);
+    let arch = [Arch::V1, Arch::Kep1, Arch::Ret2].into_iter().find(|a| p.len() >= 33 && a.packed_bytes() == packed);
+    let arch = arch.ok_or_else(|| FrameError::BadShape("model frame has the wrong size".into()))?;
+    let model = Model::from_packed(arch, &p[33..]).map_err(FrameError::BadShape)?;
     if model.weights_hash() != p[1..33] {
         return Err(FrameError::BadShape("weights do not match their hash".into()));
     }

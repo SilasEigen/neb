@@ -121,7 +121,13 @@ impl Engine {
             #[cfg(feature = "fault-injection")]
             fault: AtomicU64::new(0),
         };
-        if requested != EngineKind::Reference {
+        if requested != EngineKind::Reference && engine.dataset.arch() != neb_pow::shares::Arch::V1 {
+            engine.note(format!(
+                "{} runs the v1 network only; the {} dataset uses the reference",
+                requested.name(),
+                engine.dataset.arch().name()
+            ));
+        } else if requested != EngineKind::Reference {
             let name = requested.name();
             let unavailable =
                 if pretend_unavailable { Some("pretended: no AVX-512 here") } else { avx512::unavailable_reason() };
@@ -151,6 +157,11 @@ impl Engine {
 
     fn note(&self, message: String) {
         self.messages.lock().expect("messages").push(message);
+    }
+
+    /// The network of the engine's dataset; a model of another network cannot be mined with it.
+    pub fn arch(&self) -> neb_pow::shares::Arch {
+        self.dataset.arch()
     }
 
     /// The engine that was asked for.
@@ -195,7 +206,7 @@ impl Engine {
     /// the model. Cheap (a few milliseconds); a miner calls it once per job.
     pub fn prepare(&self, model: &Arc<Model>) -> Arc<Prepared> {
         let mut weights = None;
-        if self.optimised() {
+        if self.optimised() && model.arch() == neb_pow::shares::Arch::V1 {
             match PreparedWeights::new(model) {
                 Ok(w) => {
                     if let (Some(flat), Ok(mut scratch)) = (&self.flat, Scratch::new()) {

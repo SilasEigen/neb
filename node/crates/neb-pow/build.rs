@@ -6,14 +6,14 @@
 fn main() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     let refdir = root.join("pow/ref");
-    let files = ["shares.c", "chacha8.c", "blake3_min.c"];
+    let files = ["shares.c", "nebhash2.c", "chacha8.c", "blake3_min.c"];
     let mut b = cc::Build::new();
     b.include(&refdir);
     for f in files {
         b.file(refdir.join(f));
         println!("cargo:rerun-if-changed={}", refdir.join(f).display());
     }
-    for h in ["shares.h", "chacha8.h", "blake3_min.h"] {
+    for h in ["shares.h", "nebhash2.h", "chacha8.h", "blake3_min.h"] {
         println!("cargo:rerun-if-changed={}", refdir.join(h).display());
     }
     // The C code is integer arithmetic only, so the optimisation level cannot

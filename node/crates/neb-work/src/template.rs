@@ -120,9 +120,10 @@ pub struct Template {
     /// The model the job's block works on (its slot in the state of the parent), on
     /// which the attempts and shares of the job are evaluated.
     pub model: Arc<Model>,
-    /// The slot of that model, sent to the miner in the model frame.
+    /// The index of the dataset of the job in the network file, sent to the miner in the model frame: the slot of the
+    /// model, or the dataset of an upgrade of that slot (spec/shares.md sections 11.5 and 11.7).
     pub slot: u8,
-    /// The dataset of that slot.
+    /// That dataset.
     pub dataset: neb_pow::shares::SharedDataset,
     /// The reference header of the job: all-zero extranonce, `time_start`,
     /// nonce 0. A nonce reported on the job is the record of this header with
@@ -331,7 +332,7 @@ impl Work {
         txs.extend(chosen);
         let base =
             build_block(&job, &txs, &shares, &vec![0u8; job.extranonce_size as usize], job.time_start, 0)?.header;
-        let slot = neb_chain::slot(height, state.params.datasets.len()) as u8;
+        let slot = state.params.dataset_index_at(height) as u8;
         let dataset = state.params.dataset_at(height).clone();
         self.jobs.insert(id, Template { job, txs, shares, model: state.tip_model(), slot, dataset, base });
         // Ids increase, so the first key is the oldest job.

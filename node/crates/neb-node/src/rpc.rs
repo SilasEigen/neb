@@ -284,7 +284,7 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             let bits = node.header_at(node.height()).map(|h| h.bits).unwrap_or(net.genesis.header.bits);
             map.insert("bits".to_string(), Value::Number(bits as i64));
             map.insert("weightshash".to_string(), Value::String(hex(&node.weights_hash())));
-            map.insert("slots".to_string(), Value::Number(net.chain.datasets.len() as i64));
+            map.insert("slots".to_string(), Value::Number(net.chain.slots() as i64));
             map.insert("workport".to_string(), Value::Number(net.work_port as i64));
             map.insert("p2pport".to_string(), Value::Number(net.p2p_port as i64));
             Ok(Value::Object(map))
@@ -293,7 +293,8 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
         // "genesis" in the initial state; the residuals are not included. Parameters: none (slot 0), a slot number,
         // "genesis" (slot 0), or a slot number and "genesis". Read-only, for explorers.
         "getmodel" => {
-            let k = node.network().chain.datasets.len();
+            let chain = &node.network().chain;
+            let k = chain.slots();
             let (slot, genesis) = match (params.first(), params.get(1)) {
                 (None, None) => (0, false),
                 (Some(Value::String(g)), None) if g == "genesis" => (0, true),
@@ -323,7 +324,8 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             map.insert("blockhash".to_string(), Value::String(hex(&id)));
             map.insert("slot".to_string(), Value::Number(slot as i64));
             map.insert("slots".to_string(), Value::Number(k as i64));
-            let name = crate::params::DATASET_NAMES.get(slot).copied().unwrap_or("");
+            // the dataset this model is mined and trained on (an upgrade changes it from a height on)
+            let name = crate::params::DATASET_NAMES.get(chain.dataset_index_of(slot, height)).copied().unwrap_or("");
             map.insert("dataset".to_string(), Value::String(name.into()));
             map.insert("weightshash".to_string(), Value::String(hex(&model.weights_hash())));
             map.insert("weights".to_string(), Value::String(hex(&model.packed_weights())));

@@ -26,6 +26,7 @@ pub fn demo_params(anchor_time: u32, project_lock: [u8; 32]) -> ChainParams {
         },
         project_share_lock: project_lock,
         datasets: vec![Arc::new(SyntheticDataset::new())],
+        upgrades: Vec::new(),
     }
 }
 
@@ -50,6 +51,7 @@ pub fn easy_params(anchor_time: u32, project_lock: [u8; 32]) -> ChainParams {
         },
         project_share_lock: project_lock,
         datasets: vec![Arc::new(SyntheticDataset::new())],
+        upgrades: Vec::new(),
     }
 }
 

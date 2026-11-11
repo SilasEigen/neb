@@ -9,6 +9,7 @@
 //! - `work`: 256-bit cumulative work for chain selection.
 //! - `model`: proof of work and share list of a block, and the model step.
 //! - `state`: UTXO set, connect, disconnect, reorganisation, header rules.
+//! - `upgrade`: the datasets and models of the dataset upgrades at a height.
 //! - `demo`: block construction helpers for tests and tools.
 //! - `fixture`: recorded chains that tests and tools replay (test support, not used by the node).
 //!
@@ -25,18 +26,21 @@ pub mod fixture;
 pub mod model;
 pub mod state;
 pub mod tx;
+pub mod upgrade;
 pub mod work;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_shares;
+#[cfg(test)]
+mod tests_upgrade;
 
 pub use block::{Block, ShareRecord};
 pub use model::{
     MODEL_DEPTH, Models, ProofError, SHARE_RATIO_LOG2, initial_models, models_hash, share_key, share_target, slot,
-    verify_block,
+    upgrade_model, verify_block,
 };
-pub use state::{ChainError, ChainParams, ChainState, OutPoint, Utxo};
+pub use state::{ChainError, ChainParams, ChainState, OutPoint, Upgrade, Utxo};
 pub use tx::{COIN, Transaction, TxIn, TxOut};
 pub use work::Work;

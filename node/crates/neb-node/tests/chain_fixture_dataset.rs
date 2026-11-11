@@ -15,9 +15,11 @@ fn the_recorded_chain_fixtures_name_the_dataset_of_the_network() {
     }
 }
 
+// The two-model fixture was mined before the upgrade, on the set file of two datasets; the file of the network
+// starts with those two datasets and adds the dataset of the upgrade.
 #[test]
 fn the_two_model_fixture_names_the_dataset_set_of_the_network() {
-    let want: String = neb_node::params::DATASET_HASH.iter().map(|b| format!("{b:02x}")).collect();
+    let want: String = neb_node::params::TWO_DATASET_HASH.iter().map(|b| format!("{b:02x}")).collect();
     let path = format!("{}/../../../pow/tests/chains/pools-testnet2.txt", env!("CARGO_MANIFEST_DIR"));
     let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("cannot read {path}: {e}"));
     assert_eq!(text.lines().nth(2).unwrap(), format!("dataset file {want}"));

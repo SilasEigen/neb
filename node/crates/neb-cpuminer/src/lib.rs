@@ -405,7 +405,11 @@ fn work(session: &Session, engines: &[Arc<Engine>]) {
             continue;
         };
         // A slot this miner has no dataset for cannot be mined: wait for the next job.
-        let Some((engine, worker)) = engines.get(unit.slot as usize).zip(workers.get_mut(unit.slot as usize)) else {
+        // A model of another network than the dataset's (a miner with an old dataset file after an upgrade) neither.
+        let fits = engines.get(unit.slot as usize).is_some_and(|e| e.arch() == unit.model.arch());
+        let Some((engine, worker)) =
+            engines.get(unit.slot as usize).zip(workers.get_mut(unit.slot as usize)).filter(|_| fits)
+        else {
             thread::sleep(Duration::from_millis(200));
             continue;
         };

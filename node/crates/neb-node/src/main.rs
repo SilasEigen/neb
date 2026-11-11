@@ -334,21 +334,22 @@ fn model_accuracy(args: &[String]) -> i32 {
             return 1;
         }
     };
-    let initial = neb_chain::initial_models(&params::genesis_id(), ds.len());
+    let chain = params::chain_params(ds.clone());
     let tip = node.tip_models();
-    println!("height {}  models {}", node.height(), hex(&node.weights_hash()));
-    for (slot, d) in ds.iter().enumerate() {
+    let height = node.height();
+    println!("height {height}  models {}", hex(&node.weights_hash()));
+    for slot in 0..chain.slots() {
+        // the dataset the slot learns now, and the model it started from on that dataset
+        let index = chain.dataset_index_of(slot, height);
+        let d = &ds[index];
+        let initial = chain.initial_model_of(&params::genesis_id(), slot, height);
         let n = samples.min(d.n());
         let right = |m: &neb_pow::shares::Model| {
-            (0..n)
-                .filter(|&i| {
-                    let (x, label) = d.get(i);
-                    m.predict(&x) == label
-                })
-                .count()
+            let mut x = vec![0u8; d.arch().nin()];
+            (0..n).filter(|&i| d.sample(i, &mut x) == m.predict_sample(&x)).count()
         };
-        let name = params::DATASET_NAMES.get(slot).copied().unwrap_or("?");
-        println!("slot {slot} ({name}): initial model {} of {n} correct", right(&initial[slot]));
+        let name = params::DATASET_NAMES.get(index).copied().unwrap_or("?");
+        println!("slot {slot} ({name}): initial model {} of {n} correct", right(&initial));
         println!("slot {slot} ({name}): chain model   {} of {n} correct", right(&tip[slot]));
     }
     0

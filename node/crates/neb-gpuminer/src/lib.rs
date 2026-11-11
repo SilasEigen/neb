@@ -19,7 +19,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use neb_cpuminer::Session;
-use neb_pow::shares::{Dataset, Model, N1, N2, NIN, ShareBuffers};
+use neb_pow::shares::{Arch, Dataset, Model, N1, N2, ShareBuffers};
 
 /// The kernel that evaluates the attempts on a device.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,6 +70,15 @@ pub trait Scanner: Send {
     fn capacity(&self) -> u32;
     /// Sets the model the next scans are evaluated on: `w1` is 128 x 784 and `w2` 10 x 128, row-major.
     fn set_model(&mut self, w1: &[i8], w2: &[i8]) -> Result<(), String>;
+    /// Sets the model the next scans are evaluated on, of any architecture. The default unpacks a v1 model for
+    /// [`Scanner::set_model`]; a scanner of a v2 architecture overrides it.
+    fn set_weights(&mut self, model: &Model) -> Result<(), String> {
+        if model.arch() != Arch::V1 {
+            return Err(format!("this device kernel runs the v1 network, not {}", model.arch().name()));
+        }
+        let (w1, w2) = unpack_weights(&model.packed_weights());
+        self.set_model(&w1, &w2)
+    }
     /// All the nonces in `start..start + count` whose ticket on `header` with that nonce is not above `bound`, a
     /// 256-bit little-endian value, in no particular order. A result is never partial: a scanner that cannot report
     /// every hit of a range (see [`scan_complete`]) splits the range or fails.
@@ -202,14 +211,12 @@ pub fn unpack_weights(packed: &[u8]) -> (Vec<i8>, Vec<i8>) {
     (all[..N1].to_vec(), all[N1..].to_vec())
 }
 
-/// Samples of a dataset as the device wants them: all pixels, then all labels.
+/// Samples of a dataset as the device wants them: all values (the architecture's inputs per sample), then all labels.
 pub fn flatten(dataset: &dyn Dataset) -> (Vec<u8>, Vec<u8>) {
-    let n = dataset.n() as usize;
-    let (mut pixels, mut labels) = (Vec::with_capacity(n * NIN), Vec::with_capacity(n));
-    for i in 0..n as u32 {
-        let (x, label) = dataset.get(i);
-        pixels.extend_from_slice(&x);
-        labels.push(label);
+    let (n, nin) = (dataset.n() as usize, dataset.arch().nin());
+    let (mut pixels, mut labels) = (vec![0u8; n * nin], Vec::with_capacity(n));
+    for (i, x) in pixels.chunks_mut(nin).enumerate() {
+        labels.push(dataset.sample(i as u32, x));
     }
     (pixels, labels)
 }
@@ -262,8 +269,7 @@ pub fn spawn_worker_with_fallback(
                 let Some(make) = fallback.take() else { return false };
                 eprintln!("neb-miner-gpu: {why}; switching this device to K0");
                 match make().and_then(|mut s| {
-                    let (w1, w2) = unpack_weights(&model.packed_weights());
-                    s.set_model(&w1, &w2)?;
+                    s.set_weights(model)?;
                     Ok(s)
                 }) {
                     Ok(s) => {
@@ -282,7 +288,11 @@ pub fn spawn_worker_with_fallback(
                 thread::sleep(Duration::from_millis(20));
                 continue;
             };
-            let Some((Lane { dataset, scanner, fallback }, loaded)) = lanes.get_mut(unit.slot as usize) else {
+            // a job of a slot without a lane, or whose model is of another network than the lane's dataset (an old
+            // dataset file after an upgrade), waits for the next job
+            let Some((Lane { dataset, scanner, fallback }, loaded)) =
+                lanes.get_mut(unit.slot as usize).filter(|(l, _)| l.dataset.arch() == unit.model.arch())
+            else {
                 thread::sleep(Duration::from_millis(200));
                 continue;
             };
@@ -296,8 +306,7 @@ pub fn spawn_worker_with_fallback(
                 buffers.ticket(&unit.model, &**dataset, blake3::hash(header).as_bytes())
             };
             if !loaded.as_ref().is_some_and(|m| Arc::ptr_eq(m, &unit.model)) {
-                let (w1, w2) = unpack_weights(&unit.model.packed_weights());
-                if let Err(e) = scanner.set_model(&w1, &w2) {
+                if let Err(e) = scanner.set_weights(&unit.model) {
                     eprintln!("neb-miner-gpu: cannot load the model on the device: {e}");
                     return;
                 }

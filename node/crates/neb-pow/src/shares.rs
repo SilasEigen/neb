@@ -142,15 +142,26 @@ impl std::fmt::Display for StepError {
 
 impl std::error::Error for StepError {}
 
-/// The samples a share draws from (spec/shares.md section 4): `n() >= 1`
-/// samples, each `NIN` pixels in 0..=7 and a label in 0..=9.
+/// The samples a share draws from (spec/shares.md section 4, spec/nebhash-v2.md section 2): `n() >= 1` samples of
+/// the architecture's inputs in 0..=7 and a label below its class count.
 ///
-/// `get` is called with `index < n()` only. It must be a pure function of
-/// `index`, because every node must derive the same samples. The ranges of
-/// pixels and label are asserted in debug builds only.
+/// `get` and `sample` are called with `index < n()` only. They must be pure functions of `index`, because every node
+/// must derive the same samples. The ranges are asserted in debug builds only.
 pub trait Dataset: Send + Sync + std::fmt::Debug {
     fn n(&self) -> u32;
+    /// A sample of a 784-input dataset (the v1 network and KEP1). A dataset of another input count returns its first
+    /// 784 values; the v2 path uses [`Dataset::sample`].
     fn get(&self, index: u32) -> ([u8; NIN], u8);
+    /// The network that trains on this dataset.
+    fn arch(&self) -> Arch {
+        Arch::V1
+    }
+    /// Writes the `arch().nin()` values of sample `index` to `x` and returns its label.
+    fn sample(&self, index: u32, x: &mut [u8]) -> u8 {
+        let (values, label) = self.get(index);
+        x[..NIN].copy_from_slice(&values);
+        label
+    }
 }
 
 /// A dataset shared by the chain state, the work service and the miners.
@@ -170,97 +181,138 @@ extern "C" fn dataset_get(ctx: *mut c_void, index: u32, x: *mut u8) -> c_int {
     label as c_int
 }
 
-/// The weights `W1`, `W2` in -8..=7 and the residuals `R1`, `R2` (spec/shares.md
-/// section 4). Cloning copies all 508160 bytes.
+enum Inner {
+    V1(Box<NebModel>),
+    V2(Arch, Box<v2::V2Model>),
+}
+
+/// A model of one architecture: its weights in -8..=7 and its residuals (spec/shares.md section 4,
+/// spec/nebhash-v2.md section 6). A v1 model is `W1`, `W2`, `R1`, `R2`; cloning it copies 508160 bytes.
 pub struct Model {
-    inner: Box<NebModel>,
+    inner: Inner,
 }
 
 impl Clone for Model {
     fn clone(&self) -> Model {
-        // Copy between two heap blocks; a by-value copy would put 508160 bytes on the stack.
-        let mut inner = Box::<NebModel>::new_uninit();
-        // SAFETY: one `NebModel` is copied from an initialised box into a fresh allocation of the same type, which
-        // initialises it; `NebModel` holds integers only.
-        let inner = unsafe {
-            std::ptr::copy_nonoverlapping(&*self.inner, inner.as_mut_ptr(), 1);
-            inner.assume_init()
-        };
-        Model { inner }
+        match &self.inner {
+            Inner::V1(m) => {
+                // Copy between two heap blocks; a by-value copy would put 508160 bytes on the stack.
+                let mut inner = Box::<NebModel>::new_uninit();
+                // SAFETY: one `NebModel` is copied from an initialised box into a fresh allocation of the same type,
+                // which initialises it; `NebModel` holds integers only.
+                let inner = unsafe {
+                    std::ptr::copy_nonoverlapping(&**m, inner.as_mut_ptr(), 1);
+                    inner.assume_init()
+                };
+                Model { inner: Inner::V1(inner) }
+            }
+            Inner::V2(arch, m) => {
+                let mut copy = v2::zeroed();
+                copy.arch = m.arch;
+                copy.w.copy_from_slice(&m.w);
+                copy.r.copy_from_slice(&m.r);
+                Model { inner: Inner::V2(*arch, copy) }
+            }
+        }
     }
 }
 
 impl Model {
-    /// The packed weights of spec/shares.md section 7: `pack(W1) || pack(W2)`. Weight `e` of a
-    /// matrix is the low nibble of byte `e / 2` for even `e` and the high nibble
-    /// for odd `e` (spec/shares.md section 3). `N1` and `N2` are even, so packing the
-    /// weights as one sequence gives the two matrices one after the other.
-    pub fn packed_weights(&self) -> Vec<u8> {
-        let nibbles = self.inner.w1.iter().chain(self.inner.w2.iter());
-        let mut out = Vec::with_capacity(PACKED_WEIGHTS);
-        let mut pending = None;
-        for w in nibbles {
-            let nibble = (*w as u8) & 15;
-            match pending.take() {
-                None => pending = Some(nibble),
-                Some(low) => out.push(low | (nibble << 4)),
-            }
+    /// The network of the model.
+    pub fn arch(&self) -> Arch {
+        match &self.inner {
+            Inner::V1(_) => Arch::V1,
+            Inner::V2(a, _) => *a,
         }
-        out
     }
 
-    /// A model with these packed weights and zero residuals: enough to
-    /// evaluate shares, because the ticket depends on the weights only (the
-    /// residuals matter only when a step is applied). Fails
-    /// on a length other than `PACKED_WEIGHTS`. Every nibble is a valid weight,
-    /// so the caller compares the weights hash to detect a damaged frame.
-    pub fn from_packed_weights(bytes: &[u8]) -> Result<Model, String> {
-        if bytes.len() != PACKED_WEIGHTS {
-            return Err(format!("expected {PACKED_WEIGHTS} packed weight bytes, got {}", bytes.len()));
+    /// All the weights in model order (v1: `W1` then `W2`).
+    pub fn weights(&self) -> &[i8] {
+        match &self.inner {
+            // SAFETY: `w1` and `w2` are adjacent in `NebModel` (layout asserted above), so `N1 + N2` weights follow
+            // the start of `w1` inside the same allocation.
+            Inner::V1(m) => unsafe { std::slice::from_raw_parts(m.w1.as_ptr(), N1 + N2) },
+            Inner::V2(a, m) => &m.w[..a.weights()],
         }
-        let mut inner = Box::<NebModel>::new_uninit();
-        // All fields zero: the residuals stay zero, the weights are set below.
-        // SAFETY: `NebModel` holds integers only, so all-zero bytes are a valid value.
-        let mut inner = unsafe {
-            std::ptr::write_bytes(inner.as_mut_ptr(), 0, 1);
-            inner.assume_init()
-        };
+    }
+
+    /// All the residuals in model order (v1: `R1` then `R2`).
+    pub fn residuals(&self) -> &[i32] {
+        match &self.inner {
+            // SAFETY: as in `weights`, `r1` and `r2` are adjacent.
+            Inner::V1(m) => unsafe { std::slice::from_raw_parts(m.r1.as_ptr(), N1 + N2) },
+            Inner::V2(a, m) => &m.r[..a.weights()],
+        }
+    }
+
+    /// The packed weights of spec/shares.md section 7: two 4-bit weights per byte, weight `e` in the low nibble of
+    /// byte `e / 2` for even `e` and in the high nibble for odd `e`, over all the weights in model order.
+    pub fn packed_weights(&self) -> Vec<u8> {
+        self.weights().chunks(2).map(|p| ((p[0] as u8) & 15) | (((p[1] as u8) & 15) << 4)).collect()
+    }
+
+    /// A v1 model with these packed weights; see [`Model::from_packed`].
+    pub fn from_packed_weights(bytes: &[u8]) -> Result<Model, String> {
+        Model::from_packed(Arch::V1, bytes)
+    }
+
+    /// A model of `arch` with these packed weights and zero residuals: enough to evaluate shares, because the
+    /// ticket depends on the weights only. Fails on a length other than `arch.packed_bytes()`. Every nibble is a
+    /// valid weight, so the caller compares the weights hash to detect a damaged frame.
+    pub fn from_packed(arch: Arch, bytes: &[u8]) -> Result<Model, String> {
+        if bytes.len() != arch.packed_bytes() {
+            return Err(format!("expected {} packed weight bytes, got {}", arch.packed_bytes(), bytes.len()));
+        }
         // Sign extension of a 4-bit two's complement value.
         let signed = |nibble: u8| ((nibble << 4) as i8) >> 4;
-        for (j, b) in bytes.iter().enumerate() {
-            for (k, nibble) in [b & 15, b >> 4].into_iter().enumerate() {
-                let e = 2 * j + k;
-                if e < N1 {
-                    inner.w1[e] = signed(nibble);
-                } else {
-                    inner.w2[e - N1] = signed(nibble);
-                }
+        let weights: Vec<i8> = bytes.iter().flat_map(|b| [signed(b & 15), signed(b >> 4)]).collect();
+        match arch {
+            Arch::V1 => {
+                let zeros = vec![0i32; N1 + N2];
+                Model::from_state(&weights[..N1], &weights[N1..], &zeros[..N1], &zeros[N1..])
+            }
+            _ => {
+                let mut m = v2::zeroed();
+                m.arch = arch.id().unwrap() as i32;
+                m.w[..weights.len()].copy_from_slice(&weights);
+                Ok(Model { inner: Inner::V2(arch, m) })
             }
         }
-        Ok(Model { inner })
     }
 
-    /// Weights of layer 1, `NH` rows of `NIN`, row-major.
+    /// Weights of layer 1 of a v1 model, `NH` rows of `NIN`, row-major; empty for a v2 model.
     pub fn w1(&self) -> &[i8] {
-        &self.inner.w1
+        match &self.inner {
+            Inner::V1(m) => &m.w1,
+            Inner::V2(..) => &[],
+        }
     }
 
-    /// Weights of layer 2, `NOUT` rows of `NH`, row-major.
+    /// Weights of layer 2 of a v1 model, `NOUT` rows of `NH`, row-major; empty for a v2 model.
     pub fn w2(&self) -> &[i8] {
-        &self.inner.w2
+        match &self.inner {
+            Inner::V1(m) => &m.w2,
+            Inner::V2(..) => &[],
+        }
     }
 
-    /// Residuals of layer 1 (same layout as [`Model::w1`]).
+    /// Residuals of layer 1 of a v1 model (same layout as [`Model::w1`]); empty for a v2 model.
     pub fn r1(&self) -> &[i32] {
-        &self.inner.r1
+        match &self.inner {
+            Inner::V1(m) => &m.r1,
+            Inner::V2(..) => &[],
+        }
     }
 
-    /// Residuals of layer 2 (same layout as [`Model::w2`]).
+    /// Residuals of layer 2 of a v1 model (same layout as [`Model::w2`]); empty for a v2 model.
     pub fn r2(&self) -> &[i32] {
-        &self.inner.r2
+        match &self.inner {
+            Inner::V1(m) => &m.r2,
+            Inner::V2(..) => &[],
+        }
     }
 
-    /// A model with exactly this state. Fails on a wrong length, a weight
+    /// A v1 model with exactly this state. Fails on a wrong length, a weight
     /// outside `WEIGHT_MIN..=WEIGHT_MAX` or a residual above `2^SU` in absolute
     /// value (spec/shares.md section 4). Used by the tests and the tools that
     /// replay a state; a chain builds its models with [`Model::from_seed`] and
@@ -292,26 +344,30 @@ impl Model {
             std::ptr::copy_nonoverlapping(r2.as_ptr(), (&raw mut (*m).r2).cast::<i32>(), N2);
             inner.assume_init()
         };
-        Ok(Model { inner })
+        Ok(Model { inner: Inner::V1(inner) })
     }
 
-    /// The initial state of a 32-byte seed (spec/shares.md section 4); on the
-    /// chain the seed is the genesis block id.
+    /// The initial v1 state of a 32-byte seed (spec/shares.md section 4); on the chain the seed is the genesis block id.
     pub fn from_seed(seed: &[u8; 32]) -> Model {
+        Model::from_seed_arch(Arch::V1, seed)
+    }
+
+    /// The initial state of `arch` for a 32-byte seed (spec/shares.md section 4, spec/nebhash-v2.md section 6).
+    pub fn from_seed_arch(arch: Arch, seed: &[u8; 32]) -> Model {
+        if arch != Arch::V1 {
+            return Model { inner: Inner::V2(arch, v2::init(arch, seed)) };
+        }
         let mut inner = Box::<NebModel>::new_uninit();
         // SAFETY: `neb_model_init` reads 32 bytes of `seed` and writes every field of the model.
         let inner = unsafe {
             neb_model_init(seed.as_ptr(), inner.as_mut_ptr());
             inner.assume_init()
         };
-        Model { inner }
+        Model { inner: Inner::V1(inner) }
     }
 
-    /// The model step of spec/shares.md section 6. `gs1` and `gs2` are the sums of the
-    /// clipped gradients of the shares of the step (at most [`MAX_SHARES`], which keeps the int32 sums
-    /// exact: [`train_step`] and [`GradSum`] check it). Fails, without changing the model, when a slice has
-    /// the wrong length or when `residual + sum` of an entry leaves the exact domain of the C step. The check
-    /// is a pass over the 101632 entries and changes no result inside the domain.
+    /// The model step of spec/shares.md section 6 on a v1 model, the sums of each layer apart; see
+    /// [`Model::try_apply_sums`].
     pub fn try_apply_step(&mut self, gs1: &[i32], gs2: &[i32]) -> Result<(), StepError> {
         if gs1.len() != N1 {
             return Err(StepError::Length { layer: 1, expected: N1, got: gs1.len() });
@@ -319,15 +375,37 @@ impl Model {
         if gs2.len() != N2 {
             return Err(StepError::Length { layer: 2, expected: N2, got: gs2.len() });
         }
-        for (layer, residuals, sums) in [(1u8, &self.inner.r1[..], gs1), (2u8, &self.inner.r2[..], gs2)] {
-            for (index, (&residual, &sum)) in residuals.iter().zip(sums).enumerate() {
-                if (residual as i64 + sum as i64).unsigned_abs() > i32::MAX as u64 {
-                    return Err(StepError::OutOfRange { layer, index, residual, sum });
-                }
+        let mut all = Vec::with_capacity(N1 + N2);
+        all.extend_from_slice(gs1);
+        all.extend_from_slice(gs2);
+        self.try_apply_sums(&all)
+    }
+
+    /// The model step: `gs` holds the sums of the clipped gradients of the shares of the step, in model order (at
+    /// most [`MAX_SHARES`] shares, which keeps the int32 sums exact: [`train_step`] and [`GradSum`] check it).
+    /// Fails, without changing the model, when `gs` has the wrong length or when `residual + sum` of an entry leaves
+    /// the exact domain of the C step.
+    pub fn try_apply_sums(&mut self, gs: &[i32]) -> Result<(), StepError> {
+        let n = self.arch().weights();
+        if gs.len() != n {
+            return Err(StepError::Length { layer: 0, expected: n, got: gs.len() });
+        }
+        for (index, (&residual, &sum)) in self.residuals().iter().zip(gs).enumerate() {
+            if (residual as i64 + sum as i64).unsigned_abs() > i32::MAX as u64 {
+                // v1 names the layer and the index inside it; v2 gives the index in model order (layer 0)
+                let (layer, index) = match self.arch() {
+                    Arch::V1 if index >= N1 => (2, index - N1),
+                    Arch::V1 => (1, index),
+                    _ => (0, index),
+                };
+                return Err(StepError::OutOfRange { layer, index, residual, sum });
             }
         }
-        // SAFETY: `gs1` and `gs2` have `N1` and `N2` entries (checked above), the lengths the C step reads.
-        unsafe { neb_model_apply(&mut *self.inner, gs1.as_ptr(), gs2.as_ptr()) };
+        match &mut self.inner {
+            // SAFETY: `gs` has `N1 + N2` entries (checked above): the C step reads `N1` from the start and `N2` after.
+            Inner::V1(m) => unsafe { neb_model_apply(&mut **m, gs.as_ptr(), gs.as_ptr().add(N1)) },
+            Inner::V2(_, m) => v2::apply(m, gs),
+        }
         Ok(())
     }
 
@@ -341,10 +419,15 @@ impl Model {
 
     /// `(weights_hash, residual_hash)` of spec/shares.md section 7.
     pub fn hashes(&self) -> ([u8; 32], [u8; 32]) {
-        let (mut w, mut r) = ([0u8; 32], [0u8; 32]);
-        // SAFETY: the C code writes 32 bytes to each output buffer.
-        unsafe { neb_model_hashes(&*self.inner, w.as_mut_ptr(), r.as_mut_ptr()) };
-        (w, r)
+        match &self.inner {
+            Inner::V1(m) => {
+                let (mut w, mut r) = ([0u8; 32], [0u8; 32]);
+                // SAFETY: the C code writes 32 bytes to each output buffer.
+                unsafe { neb_model_hashes(&**m, w.as_mut_ptr(), r.as_mut_ptr()) };
+                (w, r)
+            }
+            Inner::V2(_, m) => v2::hashes(m),
+        }
     }
 
     pub fn weights_hash(&self) -> [u8; 32] {
@@ -355,19 +438,27 @@ impl Model {
         self.hashes().1
     }
 
-    /// The class of a sample: the output with the largest sum, the smallest
-    /// index on a tie. Used to report accuracy; the protocol does not use it.
-    /// Integer arithmetic, so the result is the same on every platform.
+    /// The class of a 784-input sample; see [`Model::predict_sample`].
     pub fn predict(&self, x: &[u8; NIN]) -> u8 {
-        // SAFETY: the C code reads the `NIN` bytes of `x`.
-        unsafe { neb_model_predict(&*self.inner, x.as_ptr()) as u8 }
+        self.predict_sample(x)
+    }
+
+    /// The class of a sample of the model's input count: the output with the largest sum, the smallest index on a
+    /// tie. Used to report accuracy; the protocol does not use it. Panics on another input count.
+    pub fn predict_sample(&self, x: &[u8]) -> u8 {
+        assert_eq!(x.len(), self.arch().nin(), "a sample of the model's input count");
+        match &self.inner {
+            // SAFETY: the C code reads the `NIN` bytes of `x`.
+            Inner::V1(m) => unsafe { neb_model_predict(&**m, x.as_ptr()) as u8 },
+            Inner::V2(_, m) => v2::predict(m, x),
+        }
     }
 }
 
 /// One evaluated share (spec/shares.md sections 5.1 to 5.4): the clipped
-/// gradients (`N1` and `N2` entries), the gradient digest, the ticket and the
-/// sample indices. The ticket is the BLAKE3 output as bytes; it is compared with
-/// a target as a 256-bit little-endian integer.
+/// gradients, the gradient digest, the ticket and the sample indices. For a v1 model `g1` and `g2` hold the two
+/// layers (`N1` and `N2` entries); for a v2 model `g1` holds every layer in model order and `g2` is empty. The ticket
+/// is the BLAKE3 output as bytes; it is compared with a target as a 256-bit little-endian integer.
 pub struct ShareResult {
     pub digest: [u8; 32],
     pub ticket: [u8; 32],
@@ -377,26 +468,37 @@ pub struct ShareResult {
 }
 
 /// Evaluates the share of `key` on `model`. In the proof of work `key` is the
-/// BLAKE3 hash of the header of the attempt. Allocates the gradient vectors
-/// (406528 bytes); loops use [`ShareBuffers`] instead.
+/// BLAKE3 hash of the header of the attempt. Allocates the gradient vectors; loops use [`ShareBuffers`] instead.
+/// Panics when the dataset is not of the model's architecture.
 pub fn share_eval(model: &Model, ds: &dyn Dataset, key: &[u8; 32]) -> ShareResult {
-    let cds = NebDataset { n: ds.n(), get: dataset_get, ctx: &ds as *const &dyn Dataset as *mut c_void };
-    let mut r = ShareResult { digest: [0; 32], ticket: [0; 32], indices: [0; NB], g1: vec![0; N1], g2: vec![0; N2] };
-    // SAFETY: the buffers have the sizes of pow/ref/shares.h (`N1` and `N2` gradients, 32-byte digest and ticket, `NB`
-    // indices; a null `nclip` is allowed), and `cds.ctx` points to `ds`, which outlives the call.
-    unsafe {
-        neb_share_eval(
-            &*model.inner,
-            &cds,
-            key.as_ptr(),
-            r.g1.as_mut_ptr(),
-            r.g2.as_mut_ptr(),
-            r.digest.as_mut_ptr(),
-            r.ticket.as_mut_ptr(),
-            r.indices.as_mut_ptr(),
-            std::ptr::null_mut(),
-        )
-    };
+    let mut r = ShareResult { digest: [0; 32], ticket: [0; 32], indices: [0; NB], g1: Vec::new(), g2: Vec::new() };
+    match &model.inner {
+        Inner::V1(m) => {
+            assert_eq!(ds.arch(), Arch::V1, "the dataset is not of the model's architecture");
+            r.g1 = vec![0; N1];
+            r.g2 = vec![0; N2];
+            let cds = NebDataset { n: ds.n(), get: dataset_get, ctx: &ds as *const &dyn Dataset as *mut c_void };
+            // SAFETY: the buffers have the sizes of pow/ref/shares.h (`N1` and `N2` gradients, 32-byte digest and
+            // ticket, `NB` indices; a null `nclip` is allowed), and `cds.ctx` points to `ds`, which outlives the call.
+            unsafe {
+                neb_share_eval(
+                    &**m,
+                    &cds,
+                    key.as_ptr(),
+                    r.g1.as_mut_ptr(),
+                    r.g2.as_mut_ptr(),
+                    r.digest.as_mut_ptr(),
+                    r.ticket.as_mut_ptr(),
+                    r.indices.as_mut_ptr(),
+                    std::ptr::null_mut(),
+                )
+            };
+        }
+        Inner::V2(arch, m) => {
+            r.g1 = vec![0; arch.weights()];
+            (r.digest, r.ticket) = v2::share_eval(m, *arch, ds, key, &mut r.g1, Some(&mut r.indices));
+        }
+    }
     r
 }
 
@@ -405,11 +507,12 @@ pub fn share_eval(model: &Model, ds: &dyn Dataset, key: &[u8; 32]) -> ShareResul
 pub struct ShareBuffers {
     g1: Vec<i32>,
     g2: Vec<i32>,
+    g: Vec<i32>,
 }
 
 impl ShareBuffers {
     pub fn new() -> ShareBuffers {
-        ShareBuffers { g1: vec![0; N1], g2: vec![0; N2] }
+        ShareBuffers { g1: Vec::new(), g2: Vec::new(), g: Vec::new() }
     }
 
     /// The ticket of spec/shares.md section 5.4 for `key` on `model`.
@@ -417,24 +520,45 @@ impl ShareBuffers {
         self.eval(model, ds, key).1
     }
 
+    /// The gradient of the last evaluation in model order, as two slices for a v1 model (layers 1 and 2) and as the
+    /// first slice for a v2 model.
+    fn last(&self, arch: Arch) -> (&[i32], &[i32]) {
+        if arch == Arch::V1 { (&self.g1, &self.g2) } else { (&self.g[..arch.weights()], &[]) }
+    }
+
     fn eval(&mut self, model: &Model, ds: &dyn Dataset, key: &[u8; 32]) -> ([u8; 32], [u8; 32]) {
-        let cds = NebDataset { n: ds.n(), get: dataset_get, ctx: &ds as *const &dyn Dataset as *mut c_void };
-        let (mut digest, mut ticket) = ([0u8; 32], [0u8; 32]);
-        // SAFETY: as in `share_eval`; the indices and `nclip` outputs are null, which the C code allows.
-        unsafe {
-            neb_share_eval(
-                &*model.inner,
-                &cds,
-                key.as_ptr(),
-                self.g1.as_mut_ptr(),
-                self.g2.as_mut_ptr(),
-                digest.as_mut_ptr(),
-                ticket.as_mut_ptr(),
-                std::ptr::null_mut(),
-                std::ptr::null_mut(),
-            )
-        };
-        (digest, ticket)
+        match &model.inner {
+            Inner::V1(m) => {
+                assert_eq!(ds.arch(), Arch::V1, "the dataset is not of the model's architecture");
+                if self.g1.len() != N1 {
+                    self.g1 = vec![0; N1];
+                    self.g2 = vec![0; N2];
+                }
+                let cds = NebDataset { n: ds.n(), get: dataset_get, ctx: &ds as *const &dyn Dataset as *mut c_void };
+                let (mut digest, mut ticket) = ([0u8; 32], [0u8; 32]);
+                // SAFETY: as in `share_eval`; the indices and `nclip` outputs are null, which the C code allows.
+                unsafe {
+                    neb_share_eval(
+                        &**m,
+                        &cds,
+                        key.as_ptr(),
+                        self.g1.as_mut_ptr(),
+                        self.g2.as_mut_ptr(),
+                        digest.as_mut_ptr(),
+                        ticket.as_mut_ptr(),
+                        std::ptr::null_mut(),
+                        std::ptr::null_mut(),
+                    )
+                };
+                (digest, ticket)
+            }
+            Inner::V2(arch, m) => {
+                if self.g.len() < arch.weights() {
+                    self.g = vec![0; v2::MAX_WEIGHTS];
+                }
+                v2::share_eval(m, *arch, ds, key, &mut self.g, None)
+            }
+        }
     }
 }
 
@@ -445,19 +569,19 @@ impl Default for ShareBuffers {
 }
 
 /// The sum of the clipped gradients of the shares of one model step (spec/shares.md
-/// section 6), all evaluated on the same model. The int32 sums are exact only
+/// section 6), all evaluated on models of one architecture. The int32 sums are exact only
 /// while the number of shares is at most `MAX_SHARES`; `try_add` refuses a share beyond it
 /// (a block lists at most 256, spec/node.md section 6.1).
 pub struct GradSum {
     buffers: ShareBuffers,
-    gs1: Vec<i32>,
-    gs2: Vec<i32>,
+    arch: Option<Arch>,
+    gs: Vec<i32>,
     count: usize,
 }
 
 impl GradSum {
     pub fn new() -> GradSum {
-        GradSum { buffers: ShareBuffers::new(), gs1: vec![0; N1], gs2: vec![0; N2], count: 0 }
+        GradSum { buffers: ShareBuffers::new(), arch: None, gs: Vec::new(), count: 0 }
     }
 
     /// Number of shares added so far.
@@ -465,25 +589,35 @@ impl GradSum {
         self.count
     }
 
-    /// The sums of the clipped gradients of layer 1 and layer 2 (`N1` and `N2` entries).
+    /// The sums in model order: for v1 the sums of layer 1 and layer 2 (`N1` and `N2` entries), for v2 every layer
+    /// in the first slice. Both are empty before the first share.
     pub fn sums(&self) -> (&[i32], &[i32]) {
-        (&self.gs1, &self.gs2)
+        match self.arch {
+            Some(Arch::V1) => self.gs.split_at(N1),
+            _ => (&self.gs, &[]),
+        }
     }
 
     /// Evaluates one share on `model`, adds its gradients to the sum and returns its ticket. Fails, before
     /// evaluating anything, when the sum already holds [`MAX_SHARES`] shares, the largest count for which
-    /// the int32 sums are exact.
+    /// the int32 sums are exact. Panics when `model` is not of the architecture of the shares already added.
     pub fn try_add(&mut self, model: &Model, ds: &dyn Dataset, key: &[u8; 32]) -> Result<[u8; 32], StepError> {
         if self.count >= MAX_SHARES {
             return Err(StepError::TooManyShares(self.count + 1));
         }
+        let arch = model.arch();
+        match self.arch {
+            None => {
+                self.arch = Some(arch);
+                self.gs = vec![0; arch.weights()];
+            }
+            Some(a) => assert_eq!(a, arch, "shares of two architectures in one step"),
+        }
         let (_, ticket) = self.buffers.eval(model, ds, key);
+        let (a, b) = self.buffers.last(arch);
         // `+=` cannot overflow while the share count is at most `MAX_SHARES` (bound derived at
         // `MAX_SHARES`), which the check above guarantees.
-        for (s, g) in self.gs1.iter_mut().zip(&self.buffers.g1) {
-            *s += g;
-        }
-        for (s, g) in self.gs2.iter_mut().zip(&self.buffers.g2) {
+        for (s, g) in self.gs.iter_mut().zip(a.iter().chain(b)) {
             *s += g;
         }
         self.count += 1;
@@ -503,7 +637,7 @@ impl GradSum {
     /// evaluated on (spec/shares.md section 11.2). Without shares the model is unchanged.
     pub fn try_apply(&self, model: &mut Model) -> Result<(), StepError> {
         if self.count > 0 {
-            model.try_apply_step(&self.gs1, &self.gs2)?;
+            model.try_apply_sums(&self.gs)?;
         }
         Ok(())
     }
@@ -532,166 +666,22 @@ pub fn train_step(model: &mut Model, ds: &dyn Dataset, keys: &[[u8; 32]]) -> Res
         return Err(format!("a step has 1 to {MAX_SHARES} shares, got {}", keys.len()));
     }
     let results: Vec<ShareResult> = keys.iter().map(|k| share_eval(model, ds, k)).collect();
-    let mut gs1 = vec![0i32; N1];
-    let mut gs2 = vec![0i32; N2];
+    let mut gs = vec![0i32; model.arch().weights()];
     for r in &results {
-        for (s, g) in gs1.iter_mut().zip(&r.g1) {
-            *s += g;
-        }
-        for (s, g) in gs2.iter_mut().zip(&r.g2) {
+        for (s, g) in gs.iter_mut().zip(r.g1.iter().chain(&r.g2)) {
             *s += g;
         }
     }
-    model.apply_step(&gs1, &gs2);
+    model.try_apply_sums(&gs).map_err(|e| e.to_string())?;
     Ok(results)
 }
 
-/// Keystream of ChaCha8 with the given key, zero IV and block counter from 0.
-fn chacha8(key: &[u8; 32], out: &mut [u8]) {
-    // SAFETY: the C code reads 32 bytes of `key` and writes `out.len()` bytes to `out`.
-    unsafe { chacha8_stream(key.as_ptr(), out.as_mut_ptr(), out.len()) };
-}
-
-/// The test dataset of spec/shares.md section 9: `SYN_N` samples built from ten
-/// class prototypes, label `i mod 10`. It exists to produce the test vectors and
-/// to run the demo and test chains.
-#[derive(Debug)]
-pub struct SyntheticDataset {
-    protos: [[u8; NIN]; 10],
-}
-
-impl Default for SyntheticDataset {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl SyntheticDataset {
-    pub fn new() -> SyntheticDataset {
-        let mut protos = [[0u8; NIN]; 10];
-        for (c, p) in protos.iter_mut().enumerate() {
-            let mut input = [0u8; 14];
-            input[..13].copy_from_slice(b"neb-syn-proto");
-            // The class number as one byte (spec/shares.md section 9).
-            input[13] = c as u8;
-            chacha8(blake3::hash(&input).as_bytes(), p);
-            p.iter_mut().for_each(|v| *v &= 7);
-        }
-        SyntheticDataset { protos }
-    }
-}
-
-impl Dataset for SyntheticDataset {
-    fn n(&self) -> u32 {
-        SYN_N
-    }
-
-    fn get(&self, index: u32) -> ([u8; NIN], u8) {
-        let mut input = [0u8; 18];
-        input[..14].copy_from_slice(b"neb-syn-sample");
-        input[14..].copy_from_slice(&index.to_le_bytes());
-        let mut noise = [0u8; NIN];
-        chacha8(blake3::hash(&input).as_bytes(), &mut noise);
-        let class = index % 10;
-        let proto = &self.protos[class as usize];
-        // Prototype pixel plus noise in -1..=2, clipped to 0..=7.
-        let x = std::array::from_fn(|p| (proto[p] as i32 + (noise[p] & 3) as i32 - 1).clamp(0, 7) as u8);
-        (x, class as u8)
-    }
-}
-
-/// The key of share `j` of step `s` in the test vectors (spec/shares.md section 10):
-/// `BLAKE3("neb-test-share" || LE32(s) || LE32(j))`.
-fn test_share_key(s: u32, j: u32) -> [u8; 32] {
-    let mut input = [0u8; 22];
-    input[..14].copy_from_slice(b"neb-test-share");
-    input[14..18].copy_from_slice(&s.to_le_bytes());
-    input[18..].copy_from_slice(&j.to_le_bytes());
-    *blake3::hash(&input).as_bytes()
-}
-
-fn num<T: std::str::FromStr>(s: &str) -> Result<T, String> {
-    s.parse().map_err(|_| format!("bad number {s:?}"))
-}
-
-/// Replays a `neb-shares-vectors 1` file (spec/shares.md section 10) from the
-/// zero seed on the synthetic dataset. The `init` line, every share (indices,
-/// digest, ticket) and the state hashes after every step must match. Returns
-/// the number of steps and of shares checked; the first mismatch is an error
-/// that names the line, or the step and share.
-pub fn replay_vectors(text: &str) -> Result<(usize, usize), String> {
-    let ds = SyntheticDataset::new();
-    let mut model = Model::from_seed(&[0u8; 32]);
-    let mut lines = text.lines().enumerate().map(|(n, l)| (n + 1, l.trim())).filter(|(_, l)| !l.is_empty());
-
-    let (_, first) = lines.next().ok_or("empty file")?;
-    if first != "neb-shares-vectors 1" {
-        return Err(format!("unknown header {first:?}"));
-    }
-    let (n, init) = lines.next().ok_or("missing init line")?;
-    let f: Vec<&str> = init.split(' ').collect();
-    if f.len() != 3 || f[0] != "init" {
-        return Err(format!("line {n}: expected an init line"));
-    }
-    if (hex_bytes::<32>(f[1])?, hex_bytes::<32>(f[2])?) != model.hashes() {
-        return Err(format!("line {n}: init hash mismatch"));
-    }
-
-    let mut keys = Vec::new();
-    let mut want: Vec<([u8; 32], [u8; 32], [u32; NB])> = Vec::new();
-    let (mut steps, mut shares) = (0usize, 0usize);
-    for (n, line) in lines {
-        let f: Vec<&str> = line.split(' ').collect();
-        match f[0] {
-            "share" if f.len() == 5 + NB => {
-                if num::<usize>(f[1])? != steps || num::<usize>(f[2])? != keys.len() {
-                    return Err(format!("line {n}: share out of order"));
-                }
-                let mut idx = [0u32; NB];
-                for (slot, s) in idx.iter_mut().zip(&f[5..]) {
-                    *slot = num(s)?;
-                }
-                // Keys follow from the position, so the file carries none.
-                keys.push(test_share_key(steps as u32, keys.len() as u32));
-                want.push((hex_bytes(f[3])?, hex_bytes(f[4])?, idx));
-            }
-            "state" if f.len() == 5 => {
-                if num::<usize>(f[1])? != steps || num::<usize>(f[2])? != keys.len() {
-                    return Err(format!("line {n}: state out of order"));
-                }
-                // The shares of a step are evaluated on the state left by the
-                // previous step, then applied together.
-                let got = train_step(&mut model, &ds, &keys)?;
-                for (j, (r, w)) in got.iter().zip(&want).enumerate() {
-                    if r.indices != w.2 {
-                        return Err(format!("step {steps} share {j}: indices mismatch"));
-                    }
-                    if r.digest != w.0 {
-                        return Err(format!("step {steps} share {j}: digest mismatch"));
-                    }
-                    if r.ticket != w.1 {
-                        return Err(format!("step {steps} share {j}: ticket mismatch"));
-                    }
-                }
-                if (hex_bytes::<32>(f[3])?, hex_bytes::<32>(f[4])?) != model.hashes() {
-                    return Err(format!("line {n}: state hash mismatch after step {steps}"));
-                }
-                steps += 1;
-                shares += keys.len();
-                keys.clear();
-                want.clear();
-            }
-            _ => return Err(format!("line {n}: unexpected line")),
-        }
-    }
-    if !keys.is_empty() {
-        return Err("the last step has no state line".into());
-    }
-    Ok((steps, shares))
-}
-
 mod file;
+mod v2;
+mod vectors;
 pub use file::{FileDataset, MAX_DATASETS, RECORD_BYTES, datasets_from_bytes, load_datasets};
+pub use v2::Arch;
+pub use vectors::{SyntheticDataset, SyntheticDataset2, replay_vectors, replay_vectors2};
 
 #[cfg(test)]
 mod tests;

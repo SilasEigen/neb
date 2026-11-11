@@ -11,10 +11,10 @@
 use std::sync::Arc;
 
 use neb_block::{Header, Target, TargetError};
-use neb_pow::shares::{Dataset, GradSum, Model, ShareBuffers};
+use neb_pow::shares::{Arch, Dataset, GradSum, Model, ShareBuffers};
 
 use crate::block::{Block, ShareRecord, check_shares_list};
-use crate::state::ChainParams;
+use crate::state::{ChainParams, Upgrade};
 
 /// The state of a block: one model per slot (spec/shares.md section 11.2). A model that a block does not update is
 /// shared with the parent's state.
@@ -55,6 +55,16 @@ pub fn initial_models(chain_id: &[u8; 32], k: usize) -> Models {
             Arc::new(Model::from_seed(h.finalize().as_bytes()))
         })
         .collect()
+}
+
+/// The initial model of an upgrade (spec/shares.md section 11.7): the model of the architecture of the upgrade's
+/// dataset for the seed `BLAKE3("neb-model-upgrade" || LE32(height) || LE32(slot))`.
+pub fn upgrade_model(u: &Upgrade, arch: Arch) -> Model {
+    let mut h = blake3::Hasher::new();
+    h.update(b"neb-model-upgrade");
+    h.update(&u.height.to_le_bytes());
+    h.update(&(u.slot as u32).to_le_bytes());
+    Model::from_seed_arch(arch, h.finalize().as_bytes())
 }
 
 /// The share target is the block target times 2^5, so a round yields about 32
@@ -127,24 +137,25 @@ pub fn verify_block(
     if height <= 1 && !block.shares.is_empty() {
         return Err(ProofError::Shape("the block of height 1 lists no share"));
     }
-    let k = params.datasets.len();
+    let k = params.slots();
     if models_p.len() != k || models_pp.len() != k {
-        return Err(ProofError::Shape("the state does not have one model per dataset"));
+        return Err(ProofError::Shape("the state does not have one model per slot"));
     }
-    // The key of the block is its id; its ticket uses the model of its slot in the state of the parent.
+    // The key of the block is its id; its ticket uses the model of its slot in the state of the parent, and the
+    // dataset of its height (an upgrade changes the dataset of a slot from a height on).
     if check {
         let s = slot(height, k);
         let target = Target::from_bits(block.header.bits).map_err(|_| ProofError::Shape("bits"))?;
-        if !target.admits(&ShareBuffers::new().ticket(&models_p[s], &*params.datasets[s], &block.id())) {
+        if !target.admits(&ShareBuffers::new().ticket(&models_p[s], &**params.dataset_at(height), &block.id())) {
             return Err(ProofError::BadPow);
         }
     }
     if block.shares.is_empty() {
-        return Ok(models_p.clone());
+        return Ok(params.start_upgrades(height, models_p.clone()));
     }
-    // The shares were mined for the parent's height, on the model of the parent's slot.
+    // The shares were mined for the parent's height, on the model of the parent's slot and the dataset of that height.
     let t = slot(height - 1, k);
-    let ds: &dyn Dataset = &*params.datasets[t];
+    let ds: &dyn Dataset = &**params.dataset_at(height - 1);
     let model_pp = &models_pp[t];
     // Shares belong to the round of the parent: headers whose parent is the
     // parent of `parent`, with its bits, evaluated on M(PP). The gradients are
@@ -162,5 +173,5 @@ pub fn verify_block(
     sum.apply(&mut next);
     let mut models: Vec<Arc<Model>> = models_p.to_vec();
     models[t] = Arc::new(next);
-    Ok(models.into())
+    Ok(params.start_upgrades(height, models.into()))
 }

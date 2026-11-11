@@ -266,9 +266,9 @@ pub fn account_step(before: &Model, gs1: &[i32], gs2: &[i32], after: &Model) -> 
 /// share (`verify_block`), then the model step; checks the headers, the stand-in bodies, the state hashes and
 /// (when recorded) the losses, and recomputes the step in 64-bit integers.
 pub fn replay(fx: &ChainFixture, params: &ChainParams) -> Result<ReplayReport, String> {
-    let k = params.datasets.len();
+    let k = params.slots();
     if fx.slots as usize != k {
-        return Err(format!("the fixture has {} slots, the parameters {k} datasets", fx.slots));
+        return Err(format!("the fixture has {} slots, the parameters {k}", fx.slots));
     }
     let mut models: Vec<Models> = vec![initial_models(&fx.seed, k)];
     let mut prev_id = fx.seed;
@@ -315,7 +315,11 @@ pub fn replay(fx: &ChainFixture, params: &ChainParams) -> Result<ReplayReport, S
         if !fb.list.is_empty() {
             let mut sum = GradSum::new();
             for r in &fb.list {
-                sum.add(&models_pp[t], &*params.datasets[t], &share_key(r, parent_header.parent, parent_header.bits));
+                sum.add(
+                    &models_pp[t],
+                    &**params.dataset_at(h - 1),
+                    &share_key(r, parent_header.parent, parent_header.bits),
+                );
             }
             let (gs1, gs2) = sum.sums();
             let loss = account_step(&models_p[t], gs1, gs2, &new[t]).map_err(|e| format!("{tag}: {e}"))?;
@@ -366,7 +370,7 @@ pub fn generate_stress(
         return Err("a step has 1 to 256 shares".into());
     }
     let seed = *blake3::hash(label.as_bytes()).as_bytes();
-    let k = params.datasets.len();
+    let k = params.slots();
     let mut fx =
         ChainFixture { name: name.into(), dataset: dataset_tag.into(), slots: k as u32, seed, blocks: Vec::new() };
     let mut state = rng_seed;
@@ -410,7 +414,7 @@ pub fn generate_stress(
         let (s, t) = (slot(h, k), slot(h - 1, k));
         for nonce in 0u32.. {
             header.nonce = nonce;
-            if target.admits(&buffers.ticket(&models_p[s], &*params.datasets[s], &header.id())) {
+            if target.admits(&buffers.ticket(&models_p[s], &**params.dataset_at(h), &header.id())) {
                 break;
             }
         }
@@ -422,7 +426,7 @@ pub fn generate_stress(
         } else {
             let mut sum = GradSum::new();
             for r in &list {
-                sum.add(&models_pp[t], &*params.datasets[t], &share_key(r, prev.parent, prev.bits));
+                sum.add(&models_pp[t], &**params.dataset_at(h - 1), &share_key(r, prev.parent, prev.bits));
             }
             let (gs1, gs2) = sum.sums();
             Some(account_step(&models_p[t], gs1, gs2, &new[t])?)
@@ -453,7 +457,7 @@ pub fn generate_pools(
     pools: u32,
 ) -> Result<ChainFixture, String> {
     let seed = *blake3::hash(label.as_bytes()).as_bytes();
-    let k = params.datasets.len();
+    let k = params.slots();
     let mut fx =
         ChainFixture { name: name.into(), dataset: dataset_tag.into(), slots: k as u32, seed, blocks: Vec::new() };
     let target = neb_block::Target::from_bits(bits).map_err(|e| e.to_string())?;
@@ -476,7 +480,7 @@ pub fn generate_pools(
             for j in 0..pools {
                 let header =
                     Header { version: 1, parent: prev_id, body_root: bodies[j as usize], time: time + j, bits, nonce };
-                let ticket = buffers.ticket(&models_p[s], &*params.datasets[s], &header.id());
+                let ticket = buffers.ticket(&models_p[s], &**params.dataset_at(h), &header.id());
                 if round_target.admits(&ticket) {
                     next_round.insert(ShareRecord::of_header(&header));
                 }
@@ -495,7 +499,7 @@ pub fn generate_pools(
         } else {
             let mut sum = GradSum::new();
             for r in &list {
-                sum.add(&models_pp[t], &*params.datasets[t], &share_key(r, prev.parent, prev.bits));
+                sum.add(&models_pp[t], &**params.dataset_at(h - 1), &share_key(r, prev.parent, prev.bits));
             }
             let (gs1, gs2) = sum.sums();
             Some(account_step(&models_p[t], gs1, gs2, &new[t])?)

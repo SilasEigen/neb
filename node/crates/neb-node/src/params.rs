@@ -19,7 +19,7 @@ use std::path::Path;
 
 use ed25519_dalek::SigningKey;
 use neb_block::Header;
-use neb_chain::state::{ChainParams, project_share, subsidy};
+use neb_chain::state::{ChainParams, Upgrade, project_share, subsidy};
 use neb_chain::tx::{COIN, LOCK_MULTISIG, LOCK_SINGLE, Transaction, TxIn, TxOut};
 use neb_chain::{Block, ChainState};
 use neb_pow::shares::{SharedDataset, load_datasets};
@@ -56,15 +56,31 @@ pub const WORK_PORT: u16 = 3441;
 pub const RPC_PORT: u16 = 8432;
 pub const DEFAULT_DATADIR: &str = "neb-testnet2-data";
 
-/// The datasets of the network, one per model slot, in slot order (spec/shares.md section 11.6): the transit
-/// signals of the Kepler DR24 TCE table (NASA Exoplanet Archive; label 1 = planet candidate, 0 = false positive)
-/// and the retinal OCT scans of OCTMNIST (MedMNIST v2, CC BY 4.0; labels 0 to 3). `tools/make_datasets.py` builds
-/// the set file.
-pub const DATASET_NAMES: [&str; 2] = ["kepler", "retina"];
+/// The datasets of the network file, in file order (spec/shares.md sections 11.6 and 11.7): slot 0, the transit
+/// signals of the Kepler DR24 TCE table (NASA Exoplanet Archive; label 1 = planet candidate, 0 = false positive);
+/// slot 1, the retinal OCT scans of OCTMNIST (MedMNIST v2, CC BY 4.0; labels 0 to 3); then the datasets of the upgrade
+/// to nebhash v2 (spec/nebhash-v2.md): the same Kepler signals for the KEP1 network, and the OCTMNIST scans at 64 x 64
+/// labelled 0 normal and 1 abnormal for the RET2 network. `tools/make_datasets.py` builds the set file.
+pub const DATASET_NAMES: [&str; 4] = ["kepler", "retina", "kepler-v2", "retina64"];
 
-/// BLAKE3 of the dataset set file `neb-datasets.bin` (both datasets, spec/shares.md section 11.6). A node refuses
-/// to start on another file.
+/// The height from which slot 0 is mined and trained with the KEP1 network, starting from a new model; slot 1 follows
+/// one block later with the RET2 network (spec/shares.md section 11.7). Even, so it is a height of slot 0.
+pub const UPGRADE_HEIGHT: u32 = 8800;
+
+/// The dataset upgrades of the network, in the order of the upgrade datasets of the file.
+pub const UPGRADES: [Upgrade; 2] =
+    [Upgrade { height: UPGRADE_HEIGHT, slot: 0 }, Upgrade { height: UPGRADE_HEIGHT + 1, slot: 1 }];
+
+/// BLAKE3 of the dataset set file `neb-datasets.bin` (the four datasets, spec/shares.md section 11.6). A node
+/// refuses to start on another file.
 pub const DATASET_HASH: [u8; 32] = [
+    0x29, 0x6a, 0x17, 0x4e, 0xdb, 0xf6, 0x73, 0x39, 0xfa, 0x0a, 0xf3, 0x41, 0xf0, 0x63, 0x15, 0x42, 0x92, 0xbb, 0xa2,
+    0x24, 0xb3, 0xd2, 0xca, 0xcf, 0x5b, 0x18, 0xb3, 0x1c, 0x70, 0xda, 0x80, 0xeb,
+];
+
+/// BLAKE3 of the set file of the two datasets of the testnet before the upgrade (Kepler, retina), the first two
+/// parts of the current file; the recorded chain fixture `pools-testnet2` uses it.
+pub const TWO_DATASET_HASH: [u8; 32] = [
     0xb1, 0x00, 0x8b, 0x97, 0x0f, 0x87, 0x08, 0x31, 0x79, 0xa7, 0xb2, 0x97, 0xb8, 0xf0, 0xfb, 0xec, 0x4c, 0xfc, 0x8c,
     0xc6, 0x6f, 0x60, 0x5c, 0xf2, 0xfb, 0x2c, 0x03, 0xba, 0xd8, 0xb6, 0xf3, 0x7a,
 ];
@@ -168,6 +184,7 @@ pub fn chain_params(datasets: Vec<SharedDataset>) -> ChainParams {
         },
         project_share_lock: project_share_lock(),
         datasets,
+        upgrades: UPGRADES.to_vec(),
     }
 }
 

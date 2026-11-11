@@ -21,8 +21,12 @@ The inner loops are int8-sized values in int32 sums (the largest value is 43,904
 
 ## Data the miner holds
 
-- **The dataset file**, `neb-datasets.bin` from the release (37,576,404 bytes, BLAKE3 `b1008b970f87083179a7b297b8f0fbec4cfc8cc66f605cf2fb2c03bad8b6f37a`). It holds K = 2 datasets, `NMDS || LE32(K) || dataset 0 || dataset 1`; each dataset is `NMD1 || LE32(N)` then N records of 785 bytes (784 values in 0..7, then the label). Slot 0 has 13,404 samples, slot 1 has 34,464. Load it once at start (`spec/shares.md` section 11.6).
-- **The model of the current job.** The weights change with every block, so the node sends them before every job: a Model frame of `slot (1) || weights_hash (32) || packed weights (50,816)`. Block `h` works on slot `h mod 2`, so the dataset alternates from one job to the next. Upload the 50 KB to the GPU on each job.
+- **The dataset file**, `neb-datasets.bin` from the release (259,897,080 bytes, BLAKE3 `296a174edbf67339fa0af341f063154292bba224b3d2cacf5b18b31c70da80eb`). It holds 4 datasets, `NMDS || LE32(4) || dataset 0 || ... || dataset 3`: the two of the slots, `NMD1 || LE32(N)` then N records of 785 bytes (784 values in 0..7, then the label), 13,404 and 34,464 samples; then the two of the upgrade to nebhash v2, `NMD2 || LE32(arch) || LE32(N)` then N records of the architecture's inputs and a label, 13,404 Kepler signals for KEP1 (arch 1) and 51,696 scans of 64 x 64 for RET2 (arch 2). Load it once at start (`spec/shares.md` section 11.6, `spec/nebhash-v2.md` section 2).
+- **The model of the current job.** The weights change with every block, so the node sends them before every job: a Model frame of `index (1) || weights_hash (32) || packed weights`. The first byte is the index of the dataset of the job in the file, and the dataset says which network to run. Block `h` works on slot `h mod 2`, so the dataset alternates from one job to the next. Upload the weights to the GPU on each job (50,816 bytes for v1, 13,000 for KEP1, 11,140 for RET2).
+
+### nebhash v2, from block 8800
+
+From block 8800 (slot 0) and 8801 (slot 1) the jobs use the convolutional networks of `spec/nebhash-v2.md`: KEP1 (two 1D branches on the Kepler views, 26,000 weights, about 180,800 multiply-adds per sample forward) and RET2 (three 2D convolutions on 64 x 64 scans, 22,280 weights, about 680,000). The key, the sample indices, the clip, the digest lanes and the ticket are the same as in v1. `pow/ref/nebhash2.c` is the reference for both, read from a table of layers; `pow/gpu/nebhash2_cuda.cu` is a CUDA kernel that matches it bit for bit; `vectors/nebhash2.txt` and `vectors/nebhash2_s1.txt` are the vectors.
 
 ## Talking to a node today
 

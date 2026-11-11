@@ -279,14 +279,14 @@ checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
 
 [[package]]
 name = "neb-block"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
 ]
 
 [[package]]
 name = "neb-chain"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -298,11 +298,11 @@ dependencies = [
 
 [[package]]
 name = "neb-codec"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "neb-cpuminer"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "neb-block",
@@ -315,14 +315,14 @@ dependencies = [
 
 [[package]]
 name = "neb-difficulty"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "neb-block",
 ]
 
 [[package]]
 name = "neb-engines"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "cc",
@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "neb-gpuminer"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "cc",
@@ -347,11 +347,11 @@ dependencies = [
 
 [[package]]
 name = "neb-json"
-version = "0.2.1"
+version = "0.3.0"
 
 [[package]]
 name = "neb-node"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",
@@ -367,7 +367,7 @@ dependencies = [
 
 [[package]]
 name = "neb-pow"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "cc",
@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "neb-store"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "neb-chain",
@@ -384,7 +384,7 @@ dependencies = [
 
 [[package]]
 name = "neb-wallet"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "argon2",
  "blake3",
@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "neb-work"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "blake3",
  "ed25519-dalek",

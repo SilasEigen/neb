@@ -4,6 +4,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/). The protocol version and the genesis of the network are listed separately from
 the software version: a node checks them, not the software version.
 
+## [0.3.0] - 2026-11-11
+
+Same network, genesis and chain. From block 8800 the two models of the chain are small convolutional networks
+(spec/nebhash-v2.md), each starting from a new model at its block (spec/shares.md section 11.7): KEP1 for the Kepler
+transit signals from block 8800, RET2 for the retinal scans from block 8801, on scans of 64 x 64 labelled normal or
+abnormal. **Every node and every miner must upgrade, with the new dataset file, before block 8800.** Up to block 8799
+this release accepts the same blocks as 0.2.1.
+
+- nebhash v2: the C reference `pow/ref/nebhash2.c` (one implementation for both architectures, read from a table of
+  layers), the test vectors `vectors/nebhash2.txt` and `vectors/nebhash2_s1.txt`, and an independent Python oracle
+  that replays them (`pow/oracle/nebhash2_oracle.py`).
+- Dataset upgrades at a height (spec/shares.md section 11.7) and v2 datasets (`NMD2`, with the architecture id). The
+  dataset file holds four datasets (259,897,080 bytes); the release also has it compressed as `neb-datasets.zip`.
+- The CPU miner runs the v2 networks with the reference code; the AVX-512 engine stays for the v1 network.
+- The GPU miner has a CUDA kernel for the v2 networks (`pow/gpu/nebhash2_cuda.cu`), with a self-test against the
+  reference at start. The default GPU generations also include 9.0.
+- A miner whose dataset file or release does not know the network of a job waits instead of mining it.
+
 ## [0.2.1] - 2026-11-07
 
 Same protocol (3), network and genesis as 0.2.0: nodes of both versions work together. Operators of a node that serves

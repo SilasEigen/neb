@@ -9,7 +9,7 @@ This page is for developers who want to add nebhash to their miner. The normativ
 | | |
 |---|---|
 | network | 784 inputs, 128 hidden units, 10 outputs, weights in -8..7 (4 bits) |
-| input of an attempt | 80-byte header, the model of the job (50,816 bytes), the dataset of its slot |
+| input of an attempt | 80-byte header, the model of the job (50,816 bytes; from block 8800, 13,000 for Kepler and 11,140 for the retina), the dataset the job names |
 | key | `BLAKE3(header)`, nonce in bytes 76 to 79 |
 | samples | 16 indices from the first 64 bytes of `ChaCha8(key)`: `idx = floor(u * N / 2^32)` |
 | work per attempt | about 3.3 million small-integer multiply-adds (two 16x784x128 products, small layer-2 terms) |
@@ -35,7 +35,7 @@ The node has a built-in work service: binary frames on TCP port 3441, `length (u
 | Type | Name | Direction | Payload |
 |---|---|---|---|
 | 1 | Hello | miner to node | `version (u16, 1) \|\| name (varint length, UTF-8)` |
-| 7 | Model | node to miner | `slot (u8) \|\| weights_hash (32) \|\| packed weights (50,816)` |
+| 7 | Model | node to miner | `index (u8) \|\| weights_hash (32) \|\| packed weights (50,816, or 13,000 for KEP1 and 11,140 for RET2)` |
 | 2 | Job | node to miner | target, share target, header and coinbase parts (`spec/node.md` 7.1) |
 | 6 | Share | miner to node | `job id (u64) \|\| nonce (u32)` |
 | 4 | Submit | miner to node | `job id (u64) \|\| extranonce (varint length, bytes) \|\| time (u32) \|\| nonce (u32)` |

@@ -222,7 +222,7 @@ The node serves JSON-RPC over HTTP POST on a loopback port. The request is a JSO
 | `getrawmempool` | none | array of txids |
 | `getpeerinfo` | none | array of objects: `id`, `addr`, `inbound`, `version`, `subver`, `height`, `handshake`, `connected` (seconds) |
 | `getinfo` | none | object: `version`, `protocolversion`, `network`, `testnet`, `blocks`, `bestblockhash`, `chainid`, `connections`, `miners`, `bits`, `weightshash` (the hash of the state of the tip, `spec/shares.md` section 11.2), `slots`, `workport`, `p2pport` |
-| `getmodel` | none, a slot number, `"genesis"`, or a slot number and `"genesis"` | object: `height`, `blockhash`, `slot`, `slots`, `dataset` (the name of the slot's dataset), `weightshash` and `weights`, the packed weights of the model of that slot (default 0) in the state of the tip (or in the initial state) as hex, 50,816 bytes (`spec/shares.md` section 7); residuals are not included |
+| `getmodel` | none, a slot number, `"genesis"`, or a slot number and `"genesis"` | object: `height`, `blockhash`, `slot`, `slots`, `dataset` (the name of the slot's dataset), `weightshash` and `weights`, the packed weights of the model of that slot (default 0) in the state of the tip (or in the initial state) as hex, 50,816 bytes, or 13,000 for KEP1 and 11,140 for RET2 (`spec/shares.md` section 7, `spec/nebhash-v2.md` section 6); with `"genesis"` the model is the genesis model of the slot, before any upgrade; residuals are not included |
 | `sendrawtransaction` | transaction as hexadecimal | txid; validated as in 6.4 and announced to the peers |
 
 Usage is in `docs/testnet.md`.

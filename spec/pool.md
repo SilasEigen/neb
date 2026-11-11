@@ -38,7 +38,7 @@ project share stays in the coinbase as for a solo miner.
 ## 3. Transport and encoding
 
 - TCP. Each message is one JSON object on one line, UTF-8, ended by `\n`. A line is at most 262 144 bytes; the
-  longest is `mining.set_model`, about 101 700 bytes.
+  longest is `mining.set_model`, about 101 700 bytes for the 784-128-10 network.
 - Requests carry `id` (a number or a string), `method` and `params` (an array). Responses carry the same `id`,
   `result` and `error` (`null` or `[code, "message"]`). Notifications are requests with `id` set to `null`.
 - Byte strings are lower-case hexadecimal, in the byte order of the NEB encodings: no byte of a hash, a target or a
@@ -66,8 +66,10 @@ project share stays in the coinbase as for a solo miner.
   protocol; a pool may read options from it. A session may authorize several logins: a miner software with a dev fee
   authorizes its own login as well and submits that part of its attempts under it.
 - `mining.set_target`: the pool target that applies to the jobs sent after it.
-- `mining.set_model`: the weights of a model, as in the Model frame of `spec/node.md` section 7.1: `slot` (number),
-  `weights_hash` (32 bytes) and `weights` (the 50 816 bytes of packed weights). The miner checks that
+- `mining.set_model`: the weights of a model, as in the Model frame of `spec/node.md` section 7.1: `slot` (number,
+  the index of the dataset of the jobs in the network file, which also names the network to run), `weights_hash`
+  (32 bytes) and `weights` (the packed weights: 50 816 bytes for the 784-128-10 network, 13 000 for KEP1 and 11 140
+  for RET2 of `spec/nebhash-v2.md`, the networks of the testnet from block 8800). The miner checks that
   `weights_hash` is the weights hash of `weights` (`spec/shares.md` section 7) and keeps the model under that hash.
   The pool sends it before a `mining.notify` that names a weights hash the session has not received.
 - `mining.notify`: `job` is an object with the fields `job_id` (string), `clean` (boolean), `version`, `parent`,
@@ -88,8 +90,8 @@ h         = H("leaf", BLAKE3(coinbase)); for each s in branch, in order: h = H("
 body_root = H("body", LE32(tx_count), h, shares_root)
 header    = LE32(version) || parent || body_root || LE32(time) || LE32(bits) || LE32(nonce)      (80 bytes)
 key       = BLAKE3(header)
-ticket    = the ticket of spec/shares.md section 5.4, with the key, the model named by weights_hash and the
-            dataset of the slot of the job
+ticket    = the ticket of spec/shares.md section 5.4 (spec/nebhash-v2.md for KEP1 and RET2), with the key, the
+            model named by weights_hash and the dataset that the slot of the job names
 ```
 
 `H` is the tagged hash of `spec/node.md` section 3. This is the header of `spec/node.md` section 7.1 with the extranonce
@@ -98,8 +100,9 @@ ticket    = the ticket of spec/shares.md section 5.4, with the key, the model na
 ## 6. Miner rules
 
 1. Roll the nonce, then `extranonce2`, then the time within `[time_start, time_start + time_window]`.
-2. Evaluate every attempt on the model of the job's `weights_hash` and the dataset of its slot. A job whose model the
-   miner does not hold is not mined.
+2. Evaluate every attempt on the model of the job's `weights_hash` and the dataset that its `slot` names, with the
+   network of that dataset. A job whose model the miner does not hold, or whose dataset or network it does not
+   know, is not mined.
 3. Submit every attempt whose ticket is at most the pool target. A solution and a chain share are pool shares too;
    the miner does not need to tell them apart.
 4. Stop using a job at its `expiry` (Unix time) and when a `clean` job arrives.
@@ -160,7 +163,7 @@ ticket    = the ticket of spec/shares.md section 5.4, with the key, the model na
 
 ```
 -> {"id":1,"method":"mining.subscribe","params":["exampleminer/1.0","neb-pool/1"]}
-<- {"id":1,"result":{"session":"5f0c","extranonce1":"0a1b2c3d","extranonce2_size":12,"chain_id":"8271952aba2ac5340c1dfe884caa1f2c6ee765487fa2117ddcd90710ce87248d","dataset_hash":"b1008b970f87083179a7b297b8f0fbec4cfc8cc66f605cf2fb2c03bad8b6f37a"},"error":null}
+<- {"id":1,"result":{"session":"5f0c","extranonce1":"0a1b2c3d","extranonce2_size":12,"chain_id":"8271952aba2ac5340c1dfe884caa1f2c6ee765487fa2117ddcd90710ce87248d","dataset_hash":"296a174edbf67339fa0af341f063154292bba224b3d2cacf5b18b31c70da80eb"},"error":null}
 -> {"id":2,"method":"mining.authorize","params":["neb1...addr.rig1",""]}
 <- {"id":2,"result":true,"error":null}
 <- {"id":null,"method":"mining.set_target","params":["..."]}

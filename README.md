@@ -102,7 +102,7 @@ Requirements: Rust, a C compiler, and Python 3 with numpy for the dataset tool.
 git clone https://github.com/SilasEigen/neb.git && cd neb
 (cd node && cargo build --release --locked)                 # neb-node, neb-wallet, neb-miner-cpu
 python tools/make_datasets.py --cache ../neb-cache --out ../neb-datasets.bin   # or take neb-datasets.bin from the release
-node/target/release/neb-node --dataset-hash ../neb-datasets.bin # b1008b970f87083179a7b297b8f0fbec4cfc8cc66f605cf2fb2c03bad8b6f37a
+node/target/release/neb-node --dataset-hash ../neb-datasets.bin # 296a174edbf67339fa0af341f063154292bba224b3d2cacf5b18b31c70da80eb
 ```
 
 `cargo build --release --locked -p neb-gpuminer --features cuda` adds `neb-miner-gpu` (CUDA toolkit 13). The miners can also use optional AVX-512 and tensor-core engines, off by default and checked against the reference: see [docs/mining.md](docs/mining.md). Node options, ports and wallet commands are in [docs/testnet.md](docs/testnet.md).

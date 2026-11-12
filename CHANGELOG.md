@@ -4,6 +4,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/). The protocol version and the genesis of the network are listed separately from
 the software version: a node checks them, not the software version.
 
+## [0.3.1] - 2026-11-12
+
+Same protocol, network, genesis and dataset file as 0.3.0, with the same rules at block 8800: nodes of both versions
+work together. Only the console of `neb-node --run` changes, so the upgrade is optional.
+
+- The height on the status line follows the best chain. It only moved when the work service of the node connected a
+  block, so a node that synced from its peers kept showing its height at start.
+- The node prints a line before it replays its stored chain at start, and the time the replay took. The replay checks
+  every block and every share again and can take minutes, with nothing else on the screen.
+
 ## [0.3.0] - 2026-11-11
 
 Same network, genesis and chain. From block 8800 the two models of the chain are small convolutional networks

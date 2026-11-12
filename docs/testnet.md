@@ -42,7 +42,7 @@ The node refuses to start when the dataset file does not have the pinned hash. T
 | peer-to-peer port | 3440 |
 | work service port | 3441, loopback only |
 | JSON-RPC port | 8432, loopback only |
-| software version | 0.3.0 |
+| software version | 0.3.1 |
 | protocol version | 3 (one model per dataset; a node of protocol 2 or 1 does not connect) |
 | network magic | `1db70ba3` (four bytes, hex) |
 | default maximum peers | 8 (`--max-peers`) |
@@ -64,8 +64,8 @@ The subsidy, halving schedule, project share, transaction format, block limits, 
 
 From block 8800 the Kepler model, and from block 8801 the retina model, are small convolutional networks (`spec/nebhash-v2.md`). The retina model also learns a new task: tell a normal scan from an abnormal one (choroidal neovascularization, diabetic macular edema or drusen), on scans of 64 x 64 instead of 28 x 28. Each starts from a new model at its block (`spec/shares.md` section 11.7). The chain, the blocks before 8800 and the coins do not change.
 
-- **Nodes** need release 0.3.0 and the new `neb-datasets.bin` (four datasets, 259,897,080 bytes, hash above) before block 8800. Up to block 8799 the release accepts the same blocks as the previous one, so it can be installed at any time before. A node without it refuses block 8800 and every block after it.
-- **Miners** need release 0.3.0 (the CPU miner and the GPU miner both have the new networks) and the new `neb-datasets.bin`. A miner with an older release or the old file stops mining at block 8800.
+- **Nodes** need release 0.3.0 or later and the new `neb-datasets.bin` (four datasets, 259,897,080 bytes, hash above) before block 8800. Up to block 8799 the release accepts the same blocks as the previous one, so it can be installed at any time before. A node without it refuses block 8800 and every block after it.
+- **Miners** need release 0.3.0 or later (the CPU miner and the GPU miner both have the new networks) and the new `neb-datasets.bin`. A miner with an older release or the old file stops mining at block 8800.
 - **One attempt costs more**: about 2 ms of one CPU core for KEP1 and 7 ms for RET2, against 0.4 ms before, and tens to hundreds of times a v1 attempt on a GPU. Hash rates in attempts per second drop by that factor at the upgrade and the difficulty follows (ASERT, 600 s half-life). The two slots keep one difficulty, so the Kepler blocks come faster than the retina blocks and the average stays at 60 s.
 
 ## Genesis
@@ -244,7 +244,7 @@ cargo build --release --locked -p neb-gpuminer --features cuda
 
 ## Mining on HiveOS
 
-The release has a package for the custom miner of HiveOS, `nebminer-0.3.0.tar.gz`. It holds the node, the wallet, the GPU miner and the dataset file, and the four scripts of the HiveOS interface (`tools/hiveos`). `tools/hiveos-package.sh` builds it. The miner uses every GPU of the rig by itself, so the flight sheet does not choose cards, and an option such as `--devices 0,1` in the extra arguments narrows the choice.
+The release has a package for the custom miner of HiveOS, `nebminer-0.3.1.tar.gz`. It holds the node, the wallet, the GPU miner and the dataset file, and the four scripts of the HiveOS interface (`tools/hiveos`). `tools/hiveos-package.sh` builds it. The miner uses every GPU of the rig by itself, so the flight sheet does not choose cards, and an option such as `--devices 0,1` in the extra arguments narrows the choice.
 
 Create a flight sheet with a custom miner:
 
@@ -252,7 +252,7 @@ Create a flight sheet with a custom miner:
 |---|---|
 | Miner | Custom |
 | Miner name | `nebminer` |
-| Installation URL | the link of `nebminer-0.3.0.tar.gz` on the release page |
+| Installation URL | the link of `nebminer-0.3.1.tar.gz` on the release page |
 | Hash algorithm | leave empty or choose any |
 | Wallet and worker template | your `neb1...` address (a suffix such as `.%WORKER_NAME%` is ignored) |
 | Pool URL | one or more relays as `HOST:PORT`, separated by spaces |

@@ -7,7 +7,7 @@
 //! `--color never`, no escape sequence is written.
 
 use std::io::{IsTerminal, Write};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -20,23 +20,13 @@ const DIM2: &str = "\x1b[38;5;237m";
 /// Counters shown by the status line, updated by the session threads.
 pub struct Live {
     started: Instant,
-    height: AtomicU32,
     miners: AtomicI32,
     last_block: Mutex<Option<Instant>>,
 }
 
 impl Live {
     pub fn new() -> Arc<Live> {
-        Arc::new(Live {
-            started: Instant::now(),
-            height: AtomicU32::new(0),
-            miners: AtomicI32::new(0),
-            last_block: Mutex::new(None),
-        })
-    }
-
-    pub fn set_height(&self, height: u32) {
-        self.height.store(height, Ordering::Relaxed);
+        Arc::new(Live { started: Instant::now(), miners: AtomicI32::new(0), last_block: Mutex::new(None) })
     }
 
     /// Records a connected block and returns the seconds since the previous
@@ -180,9 +170,10 @@ impl Log {
         self.line(&format!("{} {}frame error{} {}", self.stamp(), self.c(DIM), self.c(RESET), error));
     }
 
-    /// Starts the status line thread (terminal only): spinner, uptime, height,
+    /// Starts the status line thread (terminal only): spinner, uptime, height
+    /// of the best chain as `height` reads it (blocks from peers included),
     /// connected miners and time since the last block seen by the work service.
-    pub fn spawn_status(self: &Arc<Self>) {
+    pub fn spawn_status(self: &Arc<Self>, height: impl Fn() -> u32 + Send + 'static) {
         if !self.status {
             return;
         }
@@ -197,7 +188,7 @@ impl Log {
                 std::thread::sleep(Duration::from_millis(200));
                 i = (i + 1) % frames.len();
                 let up = me.live.started.elapsed().as_secs();
-                let height = me.live.height.load(Ordering::Relaxed);
+                let height = height();
                 let miners = me.live.miners.load(Ordering::Relaxed);
                 let ago = me.live.last_block.lock().ok().and_then(|g| *g).map(|t| t.elapsed().as_secs_f32());
                 let ago_text = match ago {

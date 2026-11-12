@@ -228,6 +228,10 @@ pub fn run(args: &[String]) -> i32 {
     configured.work_port = options.work_port;
     configured.rpc_port = options.rpc_port;
     configured.max_peers = options.max_peers;
+    let live = Live::new();
+    let log = Arc::new(Log::new(live.clone(), options.color));
+    log.note("replaying the stored chain: every block and share is checked again, nothing else shows until it is done");
+    let replay = std::time::Instant::now();
     let node = match Node::open(NodeConfig {
         network: configured.clone(),
         data_dir: options.datadir.clone().into(),
@@ -244,9 +248,7 @@ pub fn run(args: &[String]) -> i32 {
     }
     let height = node.height();
     let genesis_id = node.chain_id();
-    let live = Live::new();
-    live.set_height(height);
-    let log = Arc::new(Log::new(live.clone(), options.color));
+    log.note(&format!("replayed {} blocks in {:.0} s", height, replay.elapsed().as_secs_f32()));
     log.startup(&configured, &hex(&genesis_id), height, &options.datadir, options.work_port);
     match options.miner_lock {
         Some(lock) => log.note(&format!("miner coins go to lock {}", hex(&lock))),
@@ -290,7 +292,8 @@ pub fn run(args: &[String]) -> i32 {
         }
         spawn_seed_connector(node.clone(), target.clone());
     }
-    log.spawn_status();
+    let tip = node.clone();
+    log.spawn_status(move || tip.height());
 
     let work_bind = format!("127.0.0.1:{}", options.work_port);
     let work = match node.start_work_service(work_bind.parse().expect("work address"), log.clone(), live.clone()) {
@@ -453,7 +456,6 @@ fn serve_miner(mut stream: TcpStream, node: Node, log: Arc<Log>, live: Arc<Live>
                             match node.accept_submit(sub.id, &sub.extranonce, sub.time, sub.nonce) {
                                 Ok(height) => {
                                     let tip = hex(&node.tip_id());
-                                    live.set_height(height);
                                     let seconds = live.block_seen();
                                     log.block(height, &tip, seconds);
                                     // Connecting the block broadcast a fresh job

@@ -2,15 +2,18 @@
 
 ## Abstract
 
-NEB is a proof-of-work cryptocurrency whose mining attempts are training steps of a small neural network that the chain
-owns. An attempt takes a nonce, derives 16 samples of a dataset fixed by the chain, runs one training step of a 784-128-10
-network with 4-bit weights in exact integer arithmetic, and hashes the digest of the resulting gradients. That hash is the
+NEB is a proof-of-work cryptocurrency whose mining attempts are training steps of small neural networks that the chain
+owns. An attempt takes a nonce, derives 16 samples of a dataset fixed by the chain, runs one training step of a network
+with 4-bit weights in exact integer arithmetic, and hashes the digest of the resulting gradients. That hash is the
 ticket of the attempt: below the block target it makes a block, below a target 32 times easier it makes a share. The clipped
 gradients of the shares of a round are summed into one bounded update of the model, applied one block later. Every node
 rebuilds the model by replaying the shares listed in the blocks, so the model is a function of the chain, and a block is
-verified by re-execution at about 0.5 ms of one CPU core per attempt, with no proof system. In simulation the network
-reaches 96.0 % test accuracy on MNIST, and 95.7 % with the one-block delay of the protocol. On the node software with 10
-pools, the model reaches 89.9 % after 300 blocks, the accuracy of a single pool.
+verified by re-execution, with no proof system. On a network of one hidden layer an attempt costs about 0.5 ms of one CPU
+core; in simulation that network reaches 96.0 % test accuracy on MNIST, and 95.7 % with the one-block delay of the
+protocol, and on the node software 10 pools reach 89.9 % after 300 blocks, the accuracy of a single pool. The public test
+network trains two models on scientific data, transit signals of the Kepler mission and retinal scans, which the chain
+moved to convolutional networks at a block height; trained by independent miners, they reached 87.0 % and 67.8 % about
+830 blocks later.
 
 ## 1. Introduction
 
@@ -24,7 +27,7 @@ The contribution of NEB lies in the protocol-level integration of deterministic 
 work. It combines three elements, each defined by the protocol:
 
 1. **The attempt is one deterministic integer training step.** An attempt selects 16 samples of the chain's dataset and
-   runs forward pass, error and backward pass of the chain's network in exact integer arithmetic (pixels in 0..7, 4-bit
+   runs forward pass, error and backward pass of the chain's network in exact integer arithmetic (inputs in 0..7, 4-bit
    weights, int32 sums, rounding shifts and clipping). Every correct implementation gives the same bits on any hardware, so
    any node can run an attempt again and obtain the same result (section 3).
 2. **The digest of the gradient is part of the proof.** The clipped gradients are folded into a 32-byte digest, and the
@@ -40,9 +43,13 @@ As a result, the miner chooses no input except the nonce; shares come from the s
 work; a node verifies by re-execution, with no zero-knowledge proof and no trusted hardware; and the influence of one
 contribution on one step is bounded (Theorem 1).
 
-The normative texts are `spec/shares.md` (the attempt, the model step and how the chain carries shares) and `spec/node.md`
-(blocks, transactions, chain rules and the network). Sections 3 to 5 summarise them, section 6 gives the security model,
-section 7 the main results and section 8 the implementation. The detail of every experiment is in `docs/experiments.md`.
+The normative texts are `spec/shares.md` (the attempt, the model step and how the chain carries shares),
+`spec/nebhash-v2.md` (the convolutional networks) and `spec/node.md` (blocks, transactions, chain rules and the network).
+Sections 3 to 5 summarise them on the network of one hidden layer, on which the experiments of sections 6.4 and 7.1 to 7.3
+were made;
+section 3.1 gives the convolutional networks, to which the same rules apply layer by layer. Section 6 gives the security
+model, section 7 the main results and section 8 the implementation. The detail of every experiment is in
+`docs/experiments.md`.
 
 ## 2. Related work
 
@@ -87,9 +94,10 @@ the replay exact on any hardware. This reading is not a systematic survey.
 
 ## 3. The attempt and the ticket
 
-The chain owns a dataset of `N` samples (the 60,000 MNIST training images, pixels quantised to 0..7, in one file pinned
-by its BLAKE3 hash in the network parameters; `spec/shares.md` section 11.6) and a model with 4-bit signed weights `W1`
-(128 x 784) and `W2` (10 x 128). The initial model is derived from the genesis block id.
+The chain owns a dataset of `N` samples, in one file pinned by its BLAKE3 hash in the network parameters
+(`spec/shares.md` section 11.6), and a model with 4-bit signed weights. This section describes the network of one hidden
+layer, with `W1` (128 x 784) and `W2` (10 x 128), on the 60,000 MNIST training images with pixels quantised to 0..7.
+The initial model is derived from the genesis block id.
 
 An attempt has a 32-byte key. In the proof of work it is the BLAKE3 hash of an 80-byte block header, so the miner changes the
 key through the nonce field of the header, the extranonce of the coinbase or the time. The steps of an attempt are:
@@ -117,6 +125,30 @@ The ticket depends on the weights through the gradient, so it is the ticket of t
 block of a chain whose tip is `P` is an attempt on the model `M(P)` whose key is the hash of its own header; it is valid
 when its ticket is below the block target. A header alone cannot be checked, because `M(P)` depends on the bodies of the
 ancestors. The difficulty rule is ASERT (`spec/node.md` section 6.2).
+
+### 3.1 Several models and convolutional networks
+
+A network may hold `K` models, each with its own dataset in one set file pinned by its hash. A block of height `h` works
+on the model of slot `h mod K`, and its shares train that model (`spec/shares.md` sections 11.2 and 11.6). A slot moves to
+another dataset or another network at a height fixed in the network parameters, on the same chain: its model starts again
+from an initial state derived from that height, and the blocks, the share lists and the coins stay as they are
+(`spec/shares.md` section 11.7).
+
+The network of protocol 3 has two models on public scientific data. On the test network both slots moved, at blocks 8800
+and 8801, from the network of one hidden layer to small convolutional networks (`spec/nebhash-v2.md`):
+
+| | slot 0, transit signals | slot 1, retinal scans |
+|---|---|---|
+| data | Kepler DR24 threshold-crossing events (NASA Exoplanet Archive): planet candidate or false positive | OCT scans of OCTMNIST at 64 x 64 (MedMNIST+): normal or abnormal |
+| input | a global view of 583 values and a local view of 201 values of the folded light curve | 4,096 values |
+| layers | two 1D convolutions on each view, then two linear layers | three 2D convolutions, then two linear layers |
+| weights | 26,000 | 22,280 |
+| forward multiply-accumulates per sample | 180,800 | 680,000 |
+| one attempt, C reference, one CPU core | about 2 ms | about 7 ms |
+
+A layer is a convolution or a linear map with weights in -8..7 and no bias, followed by a rounding shift, a clip to -8..7
+and, for some layers, a max pooling. The key, the 16 samples, the clip of the gradients, the digest, the ticket and the
+model step of section 4 are those of the network above, applied layer by layer with one update shift per layer.
 
 ## 4. Shares and the model step
 
@@ -174,6 +206,11 @@ branches it has checked. A state holds the packed weights (50,816 bytes) and the
 is rebuilt by replaying the blocks from genesis; a reorganisation of at most 60 blocks finds its states among the kept ones.
 A miner does not hold the residuals: the work service sends it the packed weights of `M(P)` and the header to roll.
 
+With the convolutional networks of section 3.1 an evaluation takes about 2 ms (transit signals) or 7 ms (retinal scans),
+and the shares that a block lists were mined on the model of the block before it. A block with the expected 32 shares
+costs about 70 ms of one core when its shares are transit attempts and about 230 ms when they are retinal attempts, and
+at most 1.8 s with 256 shares. The packed weights take 13,000 and 11,140 bytes.
+
 ## 6. Security model
 
 ### 6.1 Assumptions
@@ -186,8 +223,9 @@ model needs a forward and a backward pass, with no strategy that costs much less
 
 Under Assumption A an adversary that makes `q` evaluations finds a ticket below a target `tau` with probability at most
 `q * tau / 2^256`, as in a hash proof of work, and the chance that an attempt wins is the same for every miner whatever data
-it works on. Assumption A plays the role that the absence of shortcuts in the hash function plays for Bitcoin. This document
-states it, and the search for shortcuts is an open problem (section 9).
+it works on. Assumption A plays the role that the absence of shortcuts in the hash function plays for Bitcoin. It is an
+assumption, stated here so that it can be examined: no proof excludes a cheaper way to obtain the digest, and no review
+outside the project has examined it yet (section 9).
 
 ### 6.2 Bounded influence of one step
 
@@ -204,7 +242,8 @@ difference and bounds it by 2. The final clip to `[-8, 7]` does not increase it 
 
 With `C = 256` and `k = 8` of 32 shares, `2kC = 4096`: at most 1 per weight and per step in layer 1 (`SU1 = 15`) and at most
 1 in layer 2 (`SU2 = 12`), whatever the adversary tries. A producer can choose the whole list of its block; the bound is then
-1 level in layer 1 (up to 64 shares) and 2 in layer 2.
+1 level in layer 1 (up to 64 shares) and 2 in layer 2. The theorem holds for each layer of the convolutional networks with
+the update shift of that layer, 12 to 16 (`spec/nebhash-v2.md` section 3): with `k = 8` the bound is 1 in every layer.
 
 **Theorem 2 (replay).** The model after `T` steps is a function of the initial model, the dataset and the sets of share
 records of the `T` steps. It does not depend on the order of the shares inside a step, or on the machine.
@@ -236,13 +275,14 @@ an adversary is measured (`docs/experiments.md`, sections 2 and 5):
   the attempts: blocks list 13 shares on average instead of 30, and the accuracy trails by about 3 points after 200 blocks
   and 1.8 points after 300. The training slows down and shows no bias.
 
-These adversaries are fixed strategies. A bound over many steps against an adaptive adversary, selfish mining and the
-economics of pools are open problems (section 9).
+These adversaries are fixed strategies, measured on the network of one hidden layer. No proof bounds an adaptive
+adversary over many steps, and selfish mining and the economics of pools are outside this analysis (section 9).
 
 ## 7. Results
 
-The results come from simulations (`tools/`) and from measurements on the node software with simulated miners on one
-machine. Methods, commands, all tables and their raw outputs are in `docs/experiments.md`.
+The results of sections 7.1 to 7.4 come from simulations (`tools/`) and from measurements on the node software with
+simulated miners on one machine. Methods, commands, all tables and their raw outputs are in `docs/experiments.md`.
+Section 7.5 reports the public network with independent miners.
 
 ### 7.1 Training
 
@@ -282,6 +322,44 @@ every 2 s and the testnet's ratio of 32 between share and block targets. The nod
 With 50 or 100 ms of delay on every link, blocks still list 30 to 35 shares. On Fashion-MNIST, with constants chosen for
 MNIST, 10 pools and one pool reach 82.0 % and 80.7 % after 1,000 blocks.
 
+### 7.4 Convolutional networks
+
+A simulation of the step rule on the two datasets of section 3.1, with 32 shares of 16 samples per step, compares the
+network of one hidden layer, the convolutional network under the same rule, and the same convolutional network trained
+with ordinary floating-point training (`spec/nebhash-v2.md` section 7):
+
+| model | one hidden layer, chain rule | convolutional, chain rule | convolutional, float training |
+|---|---|---|---|
+| transit signals (2,333 test signals) | 88.3 % at 2,000 steps | 90.8 % at 3,000 steps | 91.6 % |
+| retinal scans, normal or abnormal (500 test scans, balanced) | about 78 % | 81 to 83 % from 5,000 to 8,000 steps | 92.0 % |
+
+Each figure comes from one run, and runs differ by about 1 point on the transit signals and 2 points on the retinal scans.
+On the transit signals the integer rule with 4-bit weights is within 1 point of float training; on the retinal scans it
+is about 10 points below.
+
+### 7.5 The public test network
+
+The test network of protocol 3 started on November 7, 2026 with independent miners and pools. The figures below are read
+from its chain at block 9,644 (November 14) and from the models that a node rebuilds from it; the accuracies are measured
+on samples kept out of the dataset file.
+
+| | measured |
+|---|---|
+| block spacing | 58.9 s on average, for a target of 60 s |
+| addresses that mined at least one block | 76 (a pool counts as one) |
+| shares listed per block | 20.6 on average, median 12, for 32 expected; 4.7 % of the blocks list none |
+
+| model | at its first block | measured later |
+|---|---|---|
+| transit signals, one hidden layer (blocks 0 to 8,799) | 14.1 % | 89.0 % at block 8,798 |
+| retinal scans with 4 labels, one hidden layer (blocks 0 to 8,800) | 9.2 % | 53.6 % at block 8,799, 56.0 % at best |
+| transit signals, convolutional (from block 8,800) | 42.8 % | 87.0 % at block 9,632 |
+| retinal scans, normal or abnormal, convolutional (from block 8,801) | 47.8 % | 67.8 % at block 9,632, 70.0 % at best |
+
+The models learn from the shares of miners that do not coordinate, and every node that replays the chain obtains the same
+weights. Blocks list fewer shares than the 32 expected, so a step of the chain carries less than a step of the
+simulations of sections 7.1 to 7.4; the convolutional models had made about 420 steps each at block 9,632.
+
 ## 8. Implementation and network
 
 The repository holds the C reference of the attempt and of the model step (`pow/ref`), an independent Python oracle written
@@ -290,31 +368,43 @@ The node evaluates tickets with the C reference only. The miners may use optimis
 tensor-core kernels on NVIDIA GPUs) that compute the same tickets faster; they are off by default, self-tested against the
 reference, and every nonce they report is evaluated again with the reference before it is sent (`docs/mining.md`). On the
 measured processor the sparse AVX-512 engine is 30 to 46 times faster than the reference built with MSVC, on all threads.
+For the convolutional networks the CPU miner runs the reference code, and the GPU miner has a CUDA kernel that is
+self-tested against the reference at start.
 
 The implementation is checked bit for bit: the model step of the node agrees with an independent 64-bit step on all
 77,312,098,320 entries of the domain of the consensus, the AVX-512 engines agree with the reference on 1,673,728
 evaluations, and recorded chains give the same final model hashes in the node and in the Python oracle
 (`docs/experiments.md`, section 7).
 
-The network, called testnet, has a block every 60 s on average (ASERT with a half-life of 600 s), 20 coins per block with a
-halving every 450,000 blocks, and a UTXO money layer with Ed25519 signatures and BLAKE3 hashing, with no virtual machine.
-Parameters, genesis and operation are in `docs/testnet.md`.
+The network has a block every 60 s on average (ASERT with a half-life of 600 s), 20 coins per block with a halving every
+450,000 blocks, and a UTXO money layer with Ed25519 signatures and BLAKE3 hashing, with no virtual machine. Of each
+reward, 5 % goes to the project in a second coinbase output that the rules make mandatory (`spec/node.md` section 6.3);
+the miner gets the rest and the fees.
 
-## 9. Limitations and open problems
+The main network starts with the two convolutional networks at block 0, each from an untrained model. Its genesis
+block pays each lock a tenth of the balance it held on each of the two test networks, as coinbase outputs that
+mature after 100 blocks; the lists are rebuilt from the published chains (`docs/carry-over.md`). Nodes find each
+other through public relays and then through the addresses their peers reached (`spec/node.md` section 8.4).
+Parameters and operation are in `docs/mainnet.md`, and those of the test network in `docs/testnet.md`.
+
+## 9. Assumptions and scope
 
 1. **Assumption A.** Like every proof of work, NEB rests on an assumption about its work: no strategy produces a winning
-   ticket for less than an evaluation of the attempt. A search for shortcuts is the first open problem.
-2. **Many steps.** Theorem 1 bounds one step. A bound on the influence of an adaptive adversary over many blocks, and a
-   search for adversaries that optimise the loss of the model with look-ahead, are open. Selfish mining and the economics
-   of pools are not analysed here.
-3. **Incentives.** Shares are not paid in this version; the number that reaches the model depends on nodes relaying them.
-   Studies of paid variants are in `docs/experiments.md`, section 6.
-4. **Forks.** The effect of orphans and reorganisations on learning will be measured on the public testnet, with real
-   latency and independent miners.
-5. **Usefulness.** The model is a small classifier on a small task, and its usefulness depends on that choice. The security
-   of the chain and the reward do not depend on it. Other datasets need update constants tuned for them; a larger model
-   needs a defined use and a new genesis.
-6. **Hardware.** NEB does not claim ASIC resistance: an attempt is about 3.3 million small integer multiply-accumulates and one
+   ticket for less than an evaluation of the attempt. What supports it today is the construction (the ticket hashes a
+   digest of every entry of the gradient) and the checks of section 8. It has no proof and no external review.
+2. **Many steps.** Theorem 1 bounds one step, and section 6.4 measures fixed strategies over 300 steps. An adaptive
+   adversary over many blocks, one that optimises the loss of the model with look-ahead, selfish mining and the economics
+   of pools are not covered by a proof or a measurement.
+3. **Incentives.** A share is not paid by the protocol; the number that reaches the model depends on the nodes that relay
+   and list them, and section 7.5 gives the number measured on the public network. Studies of paid variants are in
+   `docs/experiments.md`, section 6.
+4. **Forks.** The model of a block is a function of its own chain, so a reorganisation replaces the model with that of the
+   new chain, and a node accepts none deeper than 60 blocks. The effect of orphaned blocks on learning was not measured
+   apart from the curves of section 7.5.
+5. **Usefulness.** The models are small classifiers on public data, and their usefulness depends on that choice. The
+   security of the chain and the reward do not depend on it. A slot moves to another dataset or a larger network at a
+   height fixed in the network parameters (section 3.1), with update constants tuned for it.
+6. **Hardware.** NEB does not claim ASIC resistance: an attempt is millions of small integer multiply-accumulates and one
    hash, and dedicated hardware may beat a GPU. Energy use and the economic value of the coins were not measured.
 
 ## 10. Conclusion
@@ -323,9 +413,10 @@ NEB makes the training of a small neural network the work of a proof-of-work cha
 integer training step, the digest of its gradient is the ticket, and the shares listed in the blocks drive a bounded update
 that every node replays, so the model is a function of the chain. Theorem 1 bounds what one contribution can do to one step.
 In simulation the network reaches 96.0 % on MNIST and 95.7 % with the delay of the protocol; on the node software, 10 pools
-train the model as well as one. Version 0.1.0 is a reference implementation and a test network with two public relays; its
-coins have no value. The next steps are measurements on the public testnet with independent miners, a bound over many
-steps, incentives to list and relay shares, and an external review of the protocol and of Assumption A.
+train the model as well as one. On the public test network, independent miners trained two models on scientific data, and
+the chain moved both to convolutional networks at a block height without a new genesis. What remains outside this
+document is a bound over many steps, incentives to list and relay shares, and an external review of the protocol and of
+Assumption A.
 
 ## References
 
@@ -334,6 +425,10 @@ steps, incentives to list and relay shares, and an external review of the protoc
 - D. J. Bernstein, N. Duif, T. Lange, P. Schwabe, B.-Y. Yang. High-speed high-security signatures. Journal of Cryptographic Engineering 2, 2012 (Ed25519).
 - M. Lundeberg. The aserti3-2d difficulty adjustment algorithm (absolutely scheduled exponentially rising targets).
 - Y. LeCun, C. Cortes, C. J. C. Burges. The MNIST database of handwritten digits.
+- NASA Exoplanet Archive. Kepler Q1-Q17 DR24 threshold-crossing events table.
+- C. J. Shallue, A. Vanderburg. Identifying exoplanets with deep learning: a five-planet resonant chain around Kepler-80 and an eighth planet around Kepler-90. The Astronomical Journal 155(2), 2018 (the global and local views of a folded light curve).
+- J. Yang, R. Shi, D. Wei, Z. Liu et al. MedMNIST v2: a large-scale lightweight benchmark for 2D and 3D biomedical image classification. Scientific Data 10, 41, 2023.
+- D. S. Kermany, M. Goldbaum, W. Cai et al. Identifying medical diagnoses and treatable diseases by image-based deep learning. Cell 172(5), 2018 (the OCT scans).
 - H. Xiao, K. Rasul, R. Vollgraf. Fashion-MNIST: a novel image dataset for benchmarking machine learning algorithms. arXiv:1708.07747, 2017.
 - F. Seide, H. Fu, J. Droppo, G. Li, D. Yu. 1-bit stochastic gradient descent and its application to data-parallel distributed training of speech DNNs. Interspeech 2014.
 - S. U. Stich, J.-B. Cordonnier, M. Jaggi. Sparsified SGD with memory. NeurIPS 2018.

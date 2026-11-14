@@ -7,6 +7,7 @@
 //! to those crates and decides only local policy (peers, budgets, bans,
 //! storage, ports).
 
+pub mod addrbook;
 pub mod budget;
 pub mod carry;
 pub mod daemon;

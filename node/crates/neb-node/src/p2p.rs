@@ -33,6 +33,7 @@ use neb_chain::block::{MAX_SHARES_PER_BLOCK, SHARE_RECORD_BYTES, ShareRecord, ch
 use neb_chain::tx::Transaction;
 use neb_codec::{Reader, write_varint};
 
+use crate::addrbook::{encode_addr, parse_addr};
 use crate::budget::TokenBucket;
 use crate::node::{BlockOutcome, InvKind, Node, NodeError};
 
@@ -439,13 +440,6 @@ pub fn shares_frame(magic: [u8; 4], parent: &[u8; 32], records: &[ShareRecord]) 
     encode_message(magic, CMD_SHARES, &shares_payload(parent, records))
 }
 
-/// The node keeps no address book: `getaddr` is answered with zero entries.
-fn empty_addr() -> Vec<u8> {
-    let mut out = Vec::new();
-    write_varint(&mut out, 0);
-    out
-}
-
 pub struct P2PHandle {
     pub addr: SocketAddr,
     stop: Arc<AtomicBool>,
@@ -469,6 +463,7 @@ impl Node {
         let listener = TcpListener::bind(addr)?;
         listener.set_nonblocking(true)?;
         let local = listener.local_addr()?;
+        self.book.set_listen(local);
         let node = self.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
@@ -481,7 +476,7 @@ impl Node {
                         }
                         let _ = stream.set_nonblocking(false);
                         let n = node.clone();
-                        thread::spawn(move || serve_peer(n, stream, true, peer));
+                        thread::spawn(move || serve_peer(n, stream, true, false, peer));
                     }
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(50));
@@ -498,12 +493,22 @@ impl Node {
     /// hands it to a peer thread. Returns an error when the connection fails
     /// or the peer is banned.
     pub fn connect_peer(&self, addr: SocketAddr) -> io::Result<()> {
+        self.dial(addr, false)
+    }
+
+    /// Dials an address for a handshake only: the session ends after `verack`, which marks the address good
+    /// in the address book.
+    pub fn probe_peer(&self, addr: SocketAddr) -> io::Result<()> {
+        self.dial(addr, true)
+    }
+
+    fn dial(&self, addr: SocketAddr, probe: bool) -> io::Result<()> {
         if self.is_banned(addr.ip()) {
             return Err(io::Error::new(io::ErrorKind::PermissionDenied, "the peer is banned"));
         }
         let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))?;
         let node = self.clone();
-        thread::spawn(move || serve_peer(node, stream, false, addr));
+        thread::spawn(move || serve_peer(node, stream, false, probe, addr));
         Ok(())
     }
 
@@ -520,7 +525,7 @@ fn send_getblocks(node: &Node, writer: &Arc<Mutex<TcpStream>>) {
     }
 }
 
-fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: SocketAddr) {
+fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, probe: bool, peer_addr: SocketAddr) {
     let _ = stream.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT));
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
@@ -538,7 +543,7 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: Socke
         height: node.height(),
         nonce: node.nonce(),
         genesis: node.chain_id(),
-        port: node.network().p2p_port,
+        port: node.book.advertised_port(),
         user_agent: node.network().user_agent.to_string(),
     };
     if let Ok(frame) = encode_message(magic, CMD_VERSION, &version.encode())
@@ -555,6 +560,8 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: Socke
     let mut budget = TokenBucket::new(node.pow_budget, Instant::now());
     // True from a keep-alive ping until the next message of any kind.
     let mut ping_unanswered = false;
+    // `addr` is read once, after this node asked; `getaddr` is answered once.
+    let (mut addr_asked, mut addr_given) = (false, false);
     'session: loop {
         if !handshake_done && opened.elapsed() > HANDSHAKE_TIMEOUT {
             break;
@@ -587,6 +594,9 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: Socke
                 {
                     break;
                 }
+                if inbound && v.port != 0 {
+                    node.book.learn(&[SocketAddr::new(peer_addr.ip(), v.port)]);
+                }
                 their_version = Some(v.clone());
                 node.peers.update(peer_id, |info| {
                     info.version = v.protocol;
@@ -601,6 +611,15 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: Socke
                 handshake_done = true;
                 let _ = stream.set_read_timeout(Some(Duration::from_secs(60)));
                 node.peers.update(peer_id, |info| info.handshake = true);
+                if !inbound {
+                    node.book.mark_good(peer_addr);
+                    if probe {
+                        break;
+                    }
+                    if let Ok(frame) = encode_message(magic, CMD_GETADDR, &[]) {
+                        addr_asked = write_all(&writer, &frame).is_ok();
+                    }
+                }
                 send_getblocks(&node, &writer);
             }
             CMD_PING => {
@@ -725,12 +744,17 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, peer_addr: Socke
                     break 'session;
                 }
             }
-            CMD_GETADDR => {
-                if let Ok(frame) = encode_message(magic, CMD_ADDR, &empty_addr()) {
+            CMD_GETADDR if !addr_given => {
+                addr_given = true;
+                if let Ok(frame) = encode_message(magic, CMD_ADDR, &encode_addr(&node.book.sample(peer_addr.ip()))) {
                     let _ = write_all(&writer, &frame);
                 }
             }
-            CMD_ADDR => {}
+            CMD_ADDR if addr_asked => {
+                addr_asked = false;
+                let Ok(addrs) = parse_addr(&message.payload) else { break };
+                node.book.learn(&addrs);
+            }
             CMD_NOTFOUND => {
                 let _ = parse_inv(&message.payload);
                 // The batch will not complete; stop waiting for its last block.

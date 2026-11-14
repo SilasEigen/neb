@@ -301,6 +301,10 @@ pub fn run(args: &[String]) -> i32 {
         }
         spawn_seed_connector(node.clone(), target.clone());
     }
+    // The address book is dialled only by a node that takes its peers from the network.
+    if !options.no_seeds && options.connects.is_empty() {
+        crate::addrbook::spawn_book_connector(node.clone());
+    }
     let tip = node.clone();
     log.spawn_status(move || tip.height());
 

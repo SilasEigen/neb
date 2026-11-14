@@ -27,6 +27,7 @@ use neb_pow::shares::Model;
 use neb_store::BlockStore;
 use neb_work::{Mempool, Work};
 
+use crate::addrbook::AddrBook;
 use crate::budget::{BanList, DEFAULT_POW_BUDGET, TokenBucket};
 use crate::miners::{MinerSet, MinerWriter};
 use crate::p2p::{PeerInfo, PeerSet};
@@ -159,6 +160,7 @@ pub struct Node {
     pub(crate) verify_pow: bool,
     pub(crate) pow_budget: NonZeroU32,
     pub(crate) bans: Arc<BanList>,
+    pub(crate) book: Arc<AddrBook>,
     pub(crate) nonce: u64,
 }
 
@@ -282,6 +284,7 @@ impl Node {
             last_block_at: now,
         };
         let peers = Arc::new(PeerSet::new(config.network.max_peers));
+        let book = Arc::new(AddrBook::open(Some(config.data_dir.join("peers.txt"))));
         let miners = Arc::new(MinerSet::new());
         Ok(Node {
             inner: Arc::new(Mutex::new(inner)),
@@ -292,6 +295,7 @@ impl Node {
             verify_pow: config.verify_pow,
             pow_budget: NonZeroU32::new(DEFAULT_POW_BUDGET).expect("nonzero"),
             bans: Arc::new(BanList::default()),
+            book,
             nonce: local_nonce(),
         })
     }
@@ -375,6 +379,10 @@ impl Node {
     /// True when a session with this exact address is connected.
     pub fn is_peer_connected(&self, addr: &SocketAddr) -> bool {
         self.peers.is_connected(addr)
+    }
+
+    pub fn address_book(&self) -> &AddrBook {
+        &self.book
     }
 
     pub fn nonce(&self) -> u64 {

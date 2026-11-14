@@ -250,7 +250,7 @@ impl ChainState {
         let state = ChainState {
             chain_id: genesis.id(),
             verify_pow: true,
-            models: VecDeque::from([model::initial_models(&genesis.id(), params.slots())]),
+            models: VecDeque::from([params.genesis_models(&genesis.id())]),
             blocks: vec![genesis],
             undos: Vec::new(),
             utxos,
@@ -667,7 +667,7 @@ impl ChainState {
     /// proofs were checked when the blocks were connected, so targets are not
     /// compared. Cost: the gradients of every listed share of the chain.
     fn rebuild_models(&mut self) -> Result<(), ChainError> {
-        let mut models: VecDeque<Models> = VecDeque::from([model::initial_models(&self.chain_id, self.params.slots())]);
+        let mut models: VecDeque<Models> = VecDeque::from([self.params.genesis_models(&self.chain_id)]);
         for h in 1..self.blocks.len() {
             let p = models.back().expect("the genesis state is present").clone();
             let pp = if h >= 2 { models[models.len() - 2].clone() } else { p.clone() };

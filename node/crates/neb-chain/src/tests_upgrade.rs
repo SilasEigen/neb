@@ -156,3 +156,39 @@ fn both_slots_move_to_the_convolutional_networks_and_keep_training() {
     let refused = blocks.iter().position(|b| old.connect_block(b).is_err()).expect("an old node refuses a block");
     assert_eq!(refused + 1, 6);
 }
+
+/// Two slots that hold the convolutional datasets from the genesis block, with no upgrade.
+fn params_v2_from_genesis() -> ChainParams {
+    use neb_pow::shares::SyntheticDataset2;
+    let mut p = demo::easy_params(T0, demo::PROJECT_LOCK);
+    p.datasets = vec![Arc::new(SyntheticDataset2::new(Arch::Kep1)), Arc::new(SyntheticDataset2::new(Arch::Ret2))];
+    p
+}
+
+#[test]
+fn a_chain_whose_slots_hold_convolutional_datasets_starts_with_their_networks() {
+    let p = params_v2_from_genesis();
+    assert_eq!((p.slots(), p.check_upgrades()), (2, Ok(())));
+    let genesis = demo::easy_genesis(T0);
+    let mut state = ChainState::from_genesis(p.clone(), genesis.clone()).expect("genesis");
+    let start = state.tip_models();
+    assert_eq!((start[0].arch(), start[1].arch()), (Arch::Kep1, Arch::Ret2));
+    assert_eq!(start[1].hashes(), p.initial_model_of(&genesis.id(), 1, 0).hashes());
+    let (blocks, hashes) = mine(&mut state, 8);
+    let tip = state.tip_models();
+    assert_ne!(tip[0].hashes(), start[0].hashes());
+    assert_ne!(tip[1].hashes(), start[1].hashes());
+    // a replay from the genesis block reaches every intermediate state
+    let mut again = ChainState::from_genesis(p, genesis).expect("genesis");
+    for (b, h) in blocks.iter().zip(&hashes) {
+        again.connect_block(b).expect("replay");
+        assert_eq!(models_hash(&again.tip_models()), *h);
+    }
+}
+
+#[test]
+fn the_genesis_models_of_one_hidden_layer_do_not_change() {
+    let p = params(false);
+    let id = demo::easy_genesis(T0).id();
+    assert_eq!(models_hash(&p.genesis_models(&id)), models_hash(&crate::model::initial_models(&id, 2)));
+}

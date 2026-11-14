@@ -171,7 +171,7 @@ This section defines how the share step above becomes the proof of work and the 
 | SHARE_RECORD_BYTES | 40 | bytes of a share record (section 11.2) |
 | MODEL_DEPTH | 100 | levels below the tip whose states a node keeps |
 | D | 1 | blocks between the state of a share and the state it updates, for K = 1 |
-| K | number of datasets of the network | model slots of the chain state (2 on the testnet of protocol 3) |
+| K | number of datasets of the network | model slots of the chain state (2 on the testnet of protocol 3 and on the main network) |
 
 ### 11.1 Proof of work
 
@@ -187,7 +187,7 @@ where `P` is the parent of `B`, `ticket` is the ticket of section 5.4 evaluated 
 
 A network has K >= 1 datasets `D[0] .. D[K-1]` (section 11.6), and the state of a block is a list of K models, one per dataset: `M(B) = (M(B)[0], ..., M(B)[K-1])`, each a state of section 4. The block of height `h` works on slot `h mod K`. With K = 1 the state is one model and the rules below are those of protocol 2.
 
-The state of the genesis block is the initial state of section 4 for each slot: with K = 1, `M(genesis)[0] = init(genesis id)`; with K >= 2, `M(genesis)[i] = init(BLAKE3("neb-model-slot" || genesis id || LE32(i)))`.
+The state of the genesis block is the initial state of each slot for a seed: with K = 1, `M(genesis)[0] = init(genesis id)`; with K >= 2, `M(genesis)[i] = init(BLAKE3("neb-model-slot" || genesis id || LE32(i)))`. `init` is the initial state of the network of the dataset of the slot: that of section 4 for a `NMD1` dataset, that of `spec/nebhash-v2.md` section 6 for a `NMD2` dataset, so a slot whose dataset is a v2 dataset works on its convolutional network from the genesis block, with no upgrade.
 
 Let `B` be a block, `P` its parent and `PP` the parent of `P` (`PP = P` when `P` is the genesis block). `B` lists a sequence of share records `r_1 < r_2 < ... < r_k` (`k <= MAX_SHARES_PER_BLOCK`). A record has 40 bytes, `body_root (32) || LE32(time) || LE32(nonce)`, and the records are in strictly increasing order as byte strings, so a list has no duplicate and one encoding. The block of height 1 lists none.
 
@@ -247,5 +247,7 @@ A network may move a model slot to a new dataset from a fixed height, on the sam
 - **Dataset of a height.** The dataset of height `h` is the dataset of the last upgrade of slot `h mod K` with `H <= h`, or, without one, the dataset of slot `h mod K`. It replaces `D[h mod K]` in sections 11.1 and 11.2: the proof of work of a block of height `h` uses the dataset of height `h`, and the shares of the round of `P` (height `h - 1`) use the dataset of height `h - 1`.
 - **New model.** For an upgrade (`H`, `s`), the state of the block of height `H - 1` holds, in slot `s`, the initial state of section 4 for the seed `BLAKE3("neb-model-upgrade" || LE32(H) || LE32(s))`, whatever the step of that block (that step, made on the old dataset, is dropped). The first block on the new dataset, at height `H`, works on this model, and the block of height `H + 1` applies the first step of the new dataset to it.
 - **Before the height.** Below `H - 1` nothing changes: a node that knows the upgrade builds the same states as a node that does not, so a node can take the parameters of an upgrade at any time before `H - 1`. From `H - 1` on the two disagree, and a node without the upgrade refuses the chain of the network.
+
+The main network has K = 2 and no upgrade: its file holds the two convolutional datasets described below, the Kepler signals for the KEP1 network in slot 0 and the scans at 64 x 64 for the RET2 network in slot 1, and `tools/make_mainnet_datasets.py` builds it from the file of the testnet.
 
 The testnet of protocol 3 has two upgrades, (8800, 0) and (8801, 1), which move both slots to the convolutional networks of `spec/nebhash-v2.md`. From height 8800, slot 0 works on the third dataset of the file, the Kepler signals of slot 0 for the KEP1 network; from height 8801, slot 1 works on the fourth, the OCTMNIST scans at 64 x 64 (MedMNIST+) for the RET2 network, labelled 0 for a normal scan and 1 for an abnormal one (choroidal neovascularization, diabetic macular edema or drusen), with the values of slot 1. Its samples are every drusen scan of the train and validation splits (8 616), as many of each other disease, and as many normal scans as abnormal ones, 51 696 in all; 250 normal and 250 abnormal test scans are kept out of the file. `tools/make_datasets.py` builds both.

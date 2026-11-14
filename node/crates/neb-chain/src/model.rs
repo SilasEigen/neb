@@ -43,16 +43,24 @@ pub fn models_hash(models: &Models) -> [u8; 32] {
 /// equal to the genesis id, as in protocol 2; with more, slot `i` has the seed
 /// `BLAKE3("neb-model-slot" || genesis id || LE32(i))`.
 pub fn initial_models(chain_id: &[u8; 32], k: usize) -> Models {
-    if k == 1 {
-        return Arc::from(vec![Arc::new(Model::from_seed(chain_id))]);
+    initial_models_of(chain_id, &vec![Arch::V1; k])
+}
+
+/// The state of the genesis block when slot `i` has the network `archs[i]`: the seeds of [`initial_models`], each
+/// expanded into the model of the network of its slot (spec/nebhash-v2.md section 5).
+pub fn initial_models_of(chain_id: &[u8; 32], archs: &[Arch]) -> Models {
+    if let [arch] = archs {
+        return Arc::from(vec![Arc::new(Model::from_seed_arch(*arch, chain_id))]);
     }
-    (0..k as u32)
-        .map(|i| {
+    archs
+        .iter()
+        .enumerate()
+        .map(|(i, arch)| {
             let mut h = blake3::Hasher::new();
             h.update(b"neb-model-slot");
             h.update(chain_id);
-            h.update(&i.to_le_bytes());
-            Arc::new(Model::from_seed(h.finalize().as_bytes()))
+            h.update(&(i as u32).to_le_bytes());
+            Arc::new(Model::from_seed_arch(*arch, h.finalize().as_bytes()))
         })
         .collect()
 }

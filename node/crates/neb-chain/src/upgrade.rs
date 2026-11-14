@@ -23,6 +23,12 @@ impl ChainParams {
         self.datasets.len() - self.upgrades.len()
     }
 
+    /// The models of the genesis block: for each slot, the initial model of the network of its dataset.
+    pub fn genesis_models(&self, chain_id: &[u8; 32]) -> Models {
+        let archs: Vec<_> = self.datasets[..self.slots()].iter().map(|d| d.arch()).collect();
+        model::initial_models_of(chain_id, &archs)
+    }
+
     /// Whether the upgrades are well formed: fewer than the datasets, increasing heights of at least 2, each at a
     /// height of its own slot.
     pub fn check_upgrades(&self) -> Result<(), String> {
@@ -76,7 +82,7 @@ impl ChainParams {
     pub fn initial_model_of(&self, chain_id: &[u8; 32], slot: usize, height: u32) -> Arc<Model> {
         match self.upgrade_in_state(slot, height) {
             Some((i, u)) => Arc::new(model::upgrade_model(u, self.datasets[self.slots() + i].arch())),
-            None => model::initial_models(chain_id, self.slots())[slot].clone(),
+            None => self.genesis_models(chain_id)[slot].clone(),
         }
     }
 

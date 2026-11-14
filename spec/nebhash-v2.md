@@ -1,8 +1,8 @@
 # nebhash v2: convolutional models
 
 Status: active on the testnet of protocol 3 from height 8800 (slot 0, KEP1) and 8801 (slot 1, RET2), by the
-upgrades of `spec/shares.md` section 11.7. It defines the attempt, the gradient and the model step of two small
-convolutional networks, one per model slot of the testnet, in the integer arithmetic of `spec/shares.md`. Everything
+upgrades of `spec/shares.md` section 11.7, and on the main network from the genesis block. It defines the attempt, the gradient and the model step of two small
+convolutional networks, one per model slot, in the integer arithmetic of `spec/shares.md`. Everything
 that this text does not change is as in `spec/shares.md`: the key of an attempt (3.5), the samples of a share (5.1),
 the ticket (5.4), the model step rule (6), the chain integration (11) and the dataset upgrades (11.7).
 
@@ -120,7 +120,9 @@ As `spec/shares.md` section 6, layer by layer, with the `SU` of each layer. The 
 ## 6. Initial state and identifiers
 
 The initial weights of a model of an architecture are drawn as in `spec/shares.md` section 4 from one keystream, in
-layer order then row-major order inside each tensor; the residuals start at zero.
+layer order then row-major order inside each tensor; the residuals start at zero. The seed is that of the upgrade that
+brings the dataset (`spec/shares.md` section 11.7) or, for a slot that holds a v2 dataset in the network file, that of
+the slot in the genesis state (`spec/shares.md` section 11.2).
 
 ```
 weights_hash  = BLAKE3("neb-model-weights" || pack(W_1) || ... || pack(W_L))

@@ -4,6 +4,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/). The protocol version and the genesis of the network are listed separately from
 the software version: a node checks them, not the software version.
 
+## [1.0.0] - unreleased
+
+The main network. Without an option the software runs it; the test network of protocol 3 stays behind `--testnet`.
+The launch values of the genesis block (time, target, beacon, relays and the list of the second test network) are
+fixed in this release.
+
+- Main network (`docs/mainnet.md`): protocol 3, two convolutional models from block 0 (KEP1 on the Kepler transit
+  signals, RET2 on the retinal scans), no dataset upgrade, its own tags, genesis, magic and dataset file (two
+  datasets, 222,320,684 bytes). The default data directory is `neb-data`.
+- Consensus: the models of a genesis block follow the network of the dataset of each slot (`spec/shares.md` section
+  11.2). Chains whose slots start with the one-hidden-layer network, the test network included, are unchanged.
+- Carry-over (`docs/carry-over.md`): the genesis block pays each lock a tenth of its balance on each of the two
+  test networks, as coinbase outputs of height 0. the example `carry_over` of `neb-node` rebuilds the list of the second
+  test network from its chain, and `tools/carry_check.py` checks the list of the first.
+- `--testnet` for `neb-node --run`, `--genesis` and `--model-accuracy`. A test network node needs this option and
+  the dataset file of release 0.3.1.
+- Address exchange (`spec/node.md` section 8.4): a node asks the peers it dialled for addresses with `getaddr`,
+  proves an address with a handshake before it gives it to others, keeps its book in `peers.txt` and keeps two
+  connections to it besides the relays. A node that listens on 127.0.0.1 announces port 0 and is not offered.
+- `tools/make_mainnet_datasets.py` builds the dataset file of the main network from the file of the test network.
+- The wallet file is the same on both networks; the comment line of a new file no longer names the test network.
+
 ## [0.3.1] - 2026-11-12
 
 Same protocol, network, genesis and dataset file as 0.3.0, with the same rules at block 8800: nodes of both versions

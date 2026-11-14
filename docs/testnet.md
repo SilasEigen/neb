@@ -1,5 +1,7 @@
 # Testnet
 
+From version 1.0.0 the software runs the main network by default ([mainnet.md](mainnet.md)). The test network is reached with `neb-node --run --testnet` and its own dataset file, the one of release 0.3.1. The node, miner, relay and wallet commands of this guide apply to both networks: without `--testnet`, and with the dataset file of the main network, they run on the main network.
+
 This guide covers the NEB test network: parameters, genesis, running a node, a CPU miner and a GPU miner, the peer-to-peer protocol, JSON-RPC and the wallet. Coins on this network have no value, and the key of the genesis output is published (see "Keys"). The consensus rules are those of `spec/node.md` and `spec/shares.md` (section 11): the proof of work is a training-share attempt, and every block trains a 784-128-10 model that the chain owns.
 
 ## Summary
@@ -25,7 +27,7 @@ neb-node --dataset-hash /path/to/neb-datasets.bin
 Start a node and a CPU miner:
 
 ```
-neb-node --run --dataset /path/to/neb-datasets.bin --datadir ./data-a
+neb-node --run --testnet --dataset /path/to/neb-datasets.bin --datadir ./data-a
 neb-miner-cpu --node 127.0.0.1:3441 --dataset /path/to/neb-datasets.bin --threads 8
 ```
 
@@ -42,7 +44,7 @@ The node refuses to start when the dataset file does not have the pinned hash. T
 | peer-to-peer port | 3440 |
 | work service port | 3441, loopback only |
 | JSON-RPC port | 8432, loopback only |
-| software version | 0.3.1 |
+| software version | 1.0.0 with `--testnet`; 0.3.1 was the last release that ran this network by default |
 | protocol version | 3 (one model per dataset; a node of protocol 2 or 1 does not connect) |
 | network magic | `1db70ba3` (four bytes, hex) |
 | default maximum peers | 8 (`--max-peers`) |
@@ -119,7 +121,7 @@ The holder of the project key sees and spends the project share with `neb-wallet
 
 ## Storage
 
-A node keeps its data in the directory given by `--datadir` (default `./neb-testnet-data`):
+A node keeps its data in the directory given by `--datadir` (default `./neb-data`, and `./neb-testnet2-data` with `--testnet`):
 
 - `blocks.dat` holds complete blocks, with their share lists, in an append-only log. A record is `magic "BLK1" | length u32 | block bytes | checksum u32`, where the checksum is the first four bytes of BLAKE3 over the block bytes. Every record is synced before the append returns.
 - `index.dat` holds the chain history as append-only connect and disconnect events. Each connect event carries the cumulative work of the tip it connects. The node recomputes the value from the block headers when it reads the index, so a damaged value cannot change the chain.
@@ -139,20 +141,22 @@ The binaries are in `node/target/release`.
 ## Running a node
 
 ```
-neb-node --run --dataset /path/to/neb-datasets.bin --datadir ./data-a
+neb-node --run --testnet --dataset /path/to/neb-datasets.bin --datadir ./data-a
 ```
 
 The node opens or creates the store, loads the genesis block, listens for peers on 3440, serves JSON-RPC on 127.0.0.1:8432 and serves miners on 127.0.0.1:3441. A second node on the same machine needs other ports:
 
 ```
-neb-node --run --dataset /path/to/neb-datasets.bin --datadir ./data-b --port 3450 --work-port 3451 --rpc-port 8433 --connect 127.0.0.1:3440
+neb-node --run --testnet --dataset /path/to/neb-datasets.bin --datadir ./data-b --port 3450 --work-port 3451 --rpc-port 8433 --connect 127.0.0.1:3440
 ```
 
 Both nodes must have the same genesis id; the node prints it at start. Options:
 
 ```
 --dataset FILE     dataset file with the pinned hash (required)
---datadir DIR      store directory (default ./neb-testnet-data)
+--testnet          run the test network instead of the main network
+--datadir DIR      store directory (default ./neb-data, and
+                   ./neb-testnet2-data with --testnet)
 --listen ADDR      peer bind address (default 127.0.0.1)
 --port N           peer port (default 3440)
 --work-port N      miner work service port on 127.0.0.1 (default 3441)
@@ -179,7 +183,7 @@ Both nodes must have the same genesis id; the node prints it at start. Options:
 A relay is a node that accepts many inbound peers; the nodes of the miners dial it. It needs no miner and no wallet. By estimate, two vCPUs and 2 GiB of RAM should be enough (not measured on a deployed relay): a block costs about 17 ms of one core to check, the node keeps the dataset file (260 MB) and the model states (about 46 MB), and the traffic is small.
 
 ```
-neb-node --run --dataset /srv/neb/neb-datasets.bin --datadir /srv/neb/data --listen 0.0.0.0 --max-peers 256 --seed other-relay.example.org:3440 --color never
+neb-node --run --testnet --dataset /srv/neb/neb-datasets.bin --datadir /srv/neb/data --listen 0.0.0.0 --max-peers 256 --seed other-relay.example.org:3440 --color never
 ```
 
 - **Ports.** Open TCP 3440 inbound. The work service (3441) and the JSON-RPC (8432) stay on the loopback interface of the relay.
@@ -199,7 +203,7 @@ After=network-online.target
 
 [Service]
 User=neb
-ExecStart=/usr/local/bin/neb-node --run --dataset /var/lib/neb/neb-datasets.bin --datadir /var/lib/neb/data --listen 0.0.0.0 --max-peers 256 --color never
+ExecStart=/usr/local/bin/neb-node --run --testnet --dataset /var/lib/neb/neb-datasets.bin --datadir /var/lib/neb/data --listen 0.0.0.0 --max-peers 256 --color never
 Restart=on-failure
 LimitNOFILE=4096
 
@@ -283,7 +287,9 @@ The checksum is the first four bytes of BLAKE3 over the payload and the maximum 
 
 The handshake exchanges the protocol version, the chain height, a random nonce and the genesis id. A peer that sends the node's own nonce is a self connection and is closed. After `verack` the node asks for the block ids that follow its tip with `getblocks`. The announced ids are fetched with `getdata`, 16 blocks at a time, and each block is checked and connected before the next batch is asked for. The proof of a block needs the model built by the bodies of its ancestors, so there is no header-first step. Blocks and transactions are announced with `inv`.
 
-At most `--max-peers` peers are kept (8 by default), seeds included. `--connect` dials a peer once at startup. `--seed` (alias `--addnode`) keeps a peer dialled: a lost connection is dialled again with a back-off of 1 s that doubles up to 30 s, and the peer cap applies to every dial. A peer is `HOST:PORT`; a name is resolved at every dial. A node that is given no `--connect`, no `--seed` and no `--no-seeds` dials the default seeds of the network (`DEFAULT_SEEDS` in `params.rs`; local policy, outside the consensus rules). Peer state is in memory, so addresses are not remembered across restarts. There is no address discovery: a node knows the peers it is given and the peers that dial it.
+At most `--max-peers` peers are kept (8 by default), seeds included. `--connect` dials a peer once at startup. `--seed` (alias `--addnode`) keeps a peer dialled: a lost connection is dialled again with a back-off of 1 s that doubles up to 30 s, and the peer cap applies to every dial. A peer is `HOST:PORT`; a name is resolved at every dial. A node that is given no `--connect`, no `--seed` and no `--no-seeds` dials the default seeds of the network (`DEFAULT_SEEDS` in `params.rs`; local policy, outside the consensus rules). 
+
+A node also keeps an address book (`peers.txt` in the data directory) and learns addresses from its peers: after the handshake on a connection it opened, it asks with `getaddr`. An address counts once the node has completed a handshake with it, and only those are given to other nodes. Besides its seeds, a node keeps two connections to addresses of the book, so it stays on the network when the seeds are down. `--connect` and `--no-seeds` turn this dialling off. A node that listens on 127.0.0.1, the default, announces no port and is never offered to others; a relay started with `--listen 0.0.0.0` is. The limits are in `spec/node.md` section 8.4.
 
 ### Ticket budget and ban
 
@@ -342,7 +348,7 @@ The address payload is the 32-byte single-key lock data, encoded with bech32m an
 
 ## Operating notes
 
-- Peers are given with `--connect` and `--seed`, or come from the default seeds.
-- Peer state and the ban list are kept in memory. Bans are by IP address, so peers behind one shared address share a ban.
+- Peers are given with `--connect` and `--seed`, come from the default seeds, or come from the address book (`peers.txt`), which is read at start.
+- The ban list is kept in memory. Bans are by IP address, so peers behind one shared address share a ban.
 - Tickets are evaluated with the portable C reference on the peer session threads and on the work service threads.
 - The node keeps no orphan block pool and no pruned history. It keeps the model of the last 100 levels of the best chain and of up to 64 checked side-branch blocks; a block whose parent model is not kept is refused as an orphan.

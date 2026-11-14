@@ -69,7 +69,7 @@ project share stays in the coinbase as for a solo miner.
 - `mining.set_model`: the weights of a model, as in the Model frame of `spec/node.md` section 7.1: `slot` (number,
   the index of the dataset of the jobs in the network file, which also names the network to run), `weights_hash`
   (32 bytes) and `weights` (the packed weights: 50 816 bytes for the 784-128-10 network, 13 000 for KEP1 and 11 140
-  for RET2 of `spec/nebhash-v2.md`, the networks of the testnet from block 8800). The miner checks that
+  for RET2 of `spec/nebhash-v2.md`, the networks of the main network and of the testnet from block 8800). The miner checks that
   `weights_hash` is the weights hash of `weights` (`spec/shares.md` section 7) and keeps the model under that hash.
   The pool sends it before a `mining.notify` that names a weights hash the session has not received.
 - `mining.notify`: `job` is an object with the fields `job_id` (string), `clean` (boolean), `version`, `parent`,
@@ -150,11 +150,11 @@ ticket    = the ticket of spec/shares.md section 5.4 (spec/nebhash-v2.md for KEP
 
 ## 9. Costs and limits
 
-- A ticket costs 0.5 to 1 ms of one CPU core (`spec/node.md` section 8.1), and the pool computes one for each
-  submit. Its pool target bounds the rate of submits, and a pool should limit each session to a few submits per
+- A ticket costs about 2 ms of one CPU core for KEP1 and 7 ms for RET2, and 0.5 to 1 ms for the 784-128-10 network
+  (`spec/node.md` section 8.1), and the pool computes one for each submit. Its pool target bounds the rate of submits, and a pool should limit each session to a few submits per
   second and close a session that sends tickets above its target.
 - A Model frame changes with every block, so a session receives about 100 KB per minute of `mining.set_model`.
-- The miner and the pool keep the dataset file of the network (`docs/testnet.md`); the miner checks its hash at
+- The miner and the pool keep the dataset file of the network (`docs/mainnet.md`, `docs/testnet.md`); the miner checks its hash at
   subscription.
 - A miner that withholds its solutions loses the pool's reward and the pool loses blocks, as in other proof-of-work
   pools; the pool sees it as a miner whose pool shares never lead to blocks.

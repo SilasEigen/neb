@@ -44,7 +44,7 @@ docker run --rm neb-node:local neb-node --genesis
 docker run --rm neb-node:local neb-node --chain-selftest
 ```
 
-The miner images take the options of the miners as arguments. The default is `--node 127.0.0.1:3441 --dataset /data/neb-datasets.bin --plain`; add `--engine avx512` to the CPU miner or `--gpu-kernel k2` to the GPU miner for the optional engines (`docs/testnet.md`).
+The miner images take the options of the miners as arguments. The default is `--node 127.0.0.1:3441 --dataset /data/neb-datasets.bin --plain`; add `--engine avx512` to the CPU miner or `--gpu-kernel k2` to the GPU miner for the optional engines, which serve the one-hidden-layer network of the test network only (`docs/mining.md`).
 
 ## Data
 
@@ -55,7 +55,7 @@ The volume `neb-data` holds the dataset file (`/data/neb-datasets.bin`) and the 
 ```bash
 docker volume create neb-data
 docker run -d --name neb-node --init -p 3440:3440 -v neb-data:/data \
-  -e NEB_MINER_ADDRESS=neb1... -e NEB_DATASET_URL=https://github.com/SilasEigen/neb/releases/download/v0.3.1/neb-datasets.bin \
+  -e NEB_MINER_ADDRESS=neb1... -e NEB_DATASET_URL=https://github.com/SilasEigen/neb/releases/download/v1.0.0/neb-datasets.bin \
   neb-node:local
 docker run -d --name neb-miner --init --network container:neb-node -v neb-data:/data:ro neb-miner-cpu:local
 ```

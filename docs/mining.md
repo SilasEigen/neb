@@ -11,6 +11,11 @@ validates every block and share with the C reference, and CI checks that `neb-no
 | CPU miner (`neb-miner-cpu`) | the C reference | AVX-512 VNNI, dense and sparse (`pow/cpu`, crate `neb-engines`): `--engine avx512` or `avx512-dense` | the reference |
 | GPU miner (`neb-miner-gpu`) | the dp4a kernel K0 (`pow/gpu/shares_cuda.cu`) | the tensor-core kernels K1 and K2 (`pow/gpu/shares_tc.cu`): `--gpu-kernel k1` or `k2` | K0 |
 
+The optimised engines of this table compute the one-hidden-layer network, which only the test network used, before its
+block 8800. The main network has the convolutional networks of `spec/nebhash-v2.md` from its first block: the CPU miner
+runs them with the reference code and the GPU miner with a CUDA kernel that is self-tested against the reference at
+start.
+
 ## Requirements
 
 | engine | needs | when it is not available |

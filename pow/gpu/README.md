@@ -33,5 +33,6 @@ bash pow/tests/check_shares_tc.sh                          # K0, K1 and K2 again
 neb-miner-gpu --selftest                                   # every kernel on every device, against the reference
 ```
 
-These checks need a CUDA device. This repository records no result of them for any particular device. A miner on other
-hardware relies on the self-test and on the verification of every reported nonce, and the kernels are unproven there.
+These checks need a CUDA device. This repository records no result of them for any particular device. On every
+device the miner runs the self-test at start and evaluates each nonce it reports with the reference before it is sent,
+so a kernel that computes a wrong ticket on some hardware loses work and sends nothing invalid.

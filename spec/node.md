@@ -136,7 +136,7 @@ Test vectors: section 10.
 
 ### 6.3 Reward
 
-- Reward at height h: `(20 * 10^8) >> floor(h / 450000)` base units, that is 20 coins at the start, divided by 2 (an integer shift on the base units) every 450 000 blocks (312.5 days at 60 s per block). The sum of all rewards is 18 million coins less 5 850 000 base units. There is no premine.
+- Reward at height h: `(20 * 10^8) >> floor(h / 450000)` base units, that is 20 coins at the start, divided by 2 (an integer shift on the base units) every 450 000 blocks (312.5 days at 60 s per block). The sum of all rewards is 18 million coins less 5 850 000 base units. The test network has no other coin. On the main network the genesis coinbase also pays the carry-over of the test networks (6.6), which adds to that sum; no other output exists outside the rewards.
 - Project share: `floor(reward * 5 / 100)` on the base units, paid in a mandatory second coinbase output to the multisig lock fixed by the network parameters; the miner gets the rest of the reward and all the fees. The share is exactly 1 coin per block through the first era. It is paid at every height at which the formula gives an amount above zero.
 
 ### 6.4 Transaction validity
@@ -157,9 +157,11 @@ The coinbase has two outputs: the reward of height 0 less the project share, wit
 
 The witness of the genesis coinbase is `height (u32, 0) || extranonce (8 bytes) || miner data (32 bytes)`, 44 bytes. The extranonce is the first 8 bytes of `BLAKE3("neb-testnet-extranonce" || beacon)`. The miner data is `BLAKE3("neb-testnet-beacon-3" || beacon)`. The beacon is the hash of a block of a public proof-of-work chain other than NEB, written as 64 lower-case hexadecimal characters (the ASCII bytes are hashed). The project-share lock is the 1-of-1 multisig lock of the project public key, a 32-byte constant of the network parameters (`25dadba82b1372fd76c1901524cc742224661d6fc5f0ba1b4e95f526a3aa72d3` on the testnet); the matching secret key is not derived from the beacon and is not published. The network magic (8.2) is derived from the genesis id with the tag `neb-testnet-magic`. `neb-node --genesis` prints the beacon, the genesis id, the magic, the genesis miner lock, the project public key and the project lock.
 
+**Main network.** The tags are `neb-mainnet-extranonce`, `neb-mainnet-beacon-1` and `neb-mainnet-magic`, and the project public key is that of the testnet. After the two outputs above, the genesis coinbase has one output per lock of the carry-over list, by increasing lock (lock type, then lock data as a byte string): the amount of the lock in the list, with its lock type and lock data. The carry-over list gives every lock one base unit for every 10 base units it held on each of the two test networks: its balance is the sum of its unspent outputs, coinbase outputs of any age included, at the last block of the first test network (height 3001, block `f2d0fe4dd450d5d56fd2a6959daf7c28cf71e6d52c00aa83146eb35c50b30f16`) and at a height of the second announced before the launch; `floor(balance / 10)` is taken on each network, the two results are added, and a lock with a result of zero is not listed. The lock of 32 zero bytes and the project-share lock are not listed. A lock is the same on every network, so the key that held coins on a test network spends its carry-over. The outputs of the list are coinbase outputs of height 0: they follow the coinbase maturity of 5.3. The limit on the outputs of a transaction (5.4) does not apply to the genesis coinbase, which is not checked. `docs/carry-over.md` gives the lists, their hashes and the commands that rebuild them.
+
 The genesis id, which is the chain id, depends on the beacon. Block 1 has the genesis id as its parent, the proof of work key is `BLAKE3(header)` and the initial model is derived from the genesis id. When the beacon block is mined after the rule is announced, no valid block 1 can exist before it. The external chain is used only as a public, unpredictable timestamp; the node has no other dependency on it. The beacon of the testnet is the hash of the first block of that external chain, which already exists, so it gives no protection against a pre-mined start; the property holds for a network whose beacon is chosen after the announcement.
 
-The values of the network (beacon, genesis time and target, pow limit, project-share lock, dataset hash, ports) are listed in `docs/testnet.md`.
+The values of each network (beacon, genesis time and target, pow limit, project-share lock, dataset hash, ports) are listed in `docs/mainnet.md` and `docs/testnet.md`.
 
 ### 6.7 Conservation invariant
 
@@ -221,7 +223,7 @@ The node serves JSON-RPC over HTTP POST on a loopback port. The request is a JSO
 | `getblock` | block id (64 hexadecimal characters) | the block of 4.1 and 4.2 as hexadecimal; any known block, side branches included |
 | `getrawmempool` | none | array of txids |
 | `getpeerinfo` | none | array of objects: `id`, `addr`, `inbound`, `version`, `subver`, `height`, `handshake`, `connected` (seconds) |
-| `getinfo` | none | object: `version`, `protocolversion`, `network`, `testnet`, `blocks`, `bestblockhash`, `chainid`, `connections`, `miners`, `bits`, `weightshash` (the hash of the state of the tip, `spec/shares.md` section 11.2), `slots`, `workport`, `p2pport` |
+| `getinfo` | none | object: `version`, `protocolversion`, `network`, `testnet` (true on the test network), `blocks`, `bestblockhash`, `chainid`, `connections`, `miners`, `bits`, `weightshash` (the hash of the state of the tip, `spec/shares.md` section 11.2), `slots`, `workport`, `p2pport` |
 | `getmodel` | none, a slot number, `"genesis"`, or a slot number and `"genesis"` | object: `height`, `blockhash`, `slot`, `slots`, `dataset` (the name of the slot's dataset), `weightshash` and `weights`, the packed weights of the model of that slot (default 0) in the state of the tip (or in the initial state) as hex, 50,816 bytes, or 13,000 for KEP1 and 11,140 for RET2 (`spec/shares.md` section 7, `spec/nebhash-v2.md` section 6); with `"genesis"` the model is the genesis model of the slot, before any upgrade; residuals are not included |
 | `sendrawtransaction` | transaction as hexadecimal | txid; validated as in 6.4 and announced to the peers |
 
@@ -231,7 +233,7 @@ Usage is in `docs/testnet.md`.
 
 ### 8.1 Validation cost
 
-Rejecting a bad block costs the receiver ticket evaluations, while producing it costs the sender nothing. One evaluation (`spec/shares.md` section 5) costs about 0.5 to 1 ms of one CPU core, depending on the CPU. A block needs one evaluation for its proof and one for each share of its list, so 33 for a block with 32 shares and at most 257. The proof of work and the shares need the models of the parent and the grandparent, so the header alone cannot be checked (6.1). So:
+Rejecting a bad block costs the receiver ticket evaluations, while producing it costs the sender nothing. One evaluation costs about 2 ms of one CPU core for the KEP1 network and 7 ms for RET2 (`spec/nebhash-v2.md`), and 0.5 to 1 ms for the 784-128-10 network (`spec/shares.md` section 5), depending on the CPU. A block needs one evaluation for its proof and one for each share of its list, so 33 for a block with 32 shares and at most 257. The proof of work and the shares need the models of the parent and the grandparent, so the header alone cannot be checked (6.1). So:
 
 1. The cheap checks come first (6.1 header steps 1, 2, 4 and 5, then the body shape of step 6 and the share list shape): version, known parent, expected `bits`, time window, canonical body and list. An attacker must then also name a known parent, guess the right `bits` and a plausible time. The ticket evaluations come last, in the order of 6.1: the proof of the block, then the shares.
 2. Each peer session has a budget of ticket evaluations per second (200 by default, `--pow-budget`), counted as a token bucket that holds one second of tokens. A block from a peer takes one token for its proof and one for each share, only when it reaches the proof check; a `shares` message takes one token for each record that is not yet in the share store; a session without a token waits.
@@ -240,15 +242,15 @@ Rejecting a bad block costs the receiver ticket evaluations, while producing it 
 
 ### 8.2 Messages
 
-Framing: `magic (4) || command (12, ASCII, zero padded) || length (u32) || checksum (4) || payload`. The magic is the first four bytes of `BLAKE3("neb-testnet-magic" || chain_id)`. The checksum is the first four bytes of `BLAKE3(payload)`. The maximum payload is 2 MiB. A message with a wrong magic, a wrong checksum or too large a payload closes the session, and so does a message that does not decode.
+Framing: `magic (4) || command (12, ASCII, zero padded) || length (u32) || checksum (4) || payload`. The magic is the first four bytes of `BLAKE3(tag || chain_id)`, the tag being `neb-testnet-magic` on the test network and `neb-mainnet-magic` on the main network. The checksum is the first four bytes of `BLAKE3(payload)`. The maximum payload is 2 MiB. A message with a wrong magic, a wrong checksum or too large a payload closes the session, and so does a message that does not decode.
 
 | Command | Payload |
 |---|---|
 | `version` | `protocol (u32, 3) || height (u32) || nonce (u64) || genesis id (32) || port (u16) || user agent (varint length of at most 256, UTF-8 bytes)` |
 | `verack` | empty |
 | `ping`, `pong` | 8 bytes; `pong` repeats the payload of the `ping` |
-| `getaddr` | empty; answered with `addr` |
-| `addr` | `count (varint) || entries` (section 11) |
+| `getaddr` | empty; answered with `addr`, once per session |
+| `addr` | `count (varint, at most 100) || entries`, an entry being `address (16 bytes, an IPv6 address, an IPv4 address in its IPv4-mapped form) || port (u16)` |
 | `getheaders`, `getblocks` | `count (varint, at most 64) || block ids (32 each)`, the locator: ids of the best chain of the sender, newest first (the last 10 heights one by one, then gaps of 2, 4, 8, ... blocks, then the genesis block) |
 | `headers` | `count (varint, at most 2000) || headers (80 bytes each)`; a node answers `getheaders` and ignores a `headers` message |
 | `inv`, `getdata`, `notfound` | `count (varint, at most 5000) || entries`, an entry being `kind (u8, 1 block or 2 transaction) || id (32)` |
@@ -262,7 +264,8 @@ Framing: `magic (4) || command (12, ASCII, zero padded) || length (u32) || check
 - A block whose parent is unknown, or whose parent model the node does not hold, is refused as an orphan; the node keeps no orphan pool, and answers an unsolicited orphan with `getblocks`.
 - Shares: a node that keeps a new valid share record (found by its miners or received) sends it to its peers with `shares`, once per record and per peer, and only for a parent that is the tip or the parent of the tip (`spec/shares.md` section 11.5). A `shares` message for another parent is ignored. A record whose ticket is above the share target is invalid: the session is closed and the IP address banned for 24 hours as for an invalid block (8.1). A record already in the store costs no evaluation and is not relayed.
 - Relay: a best block that changed and a transaction that arrived are announced to the other peers with `inv`. A transaction received with `tx` is validated as in 6.4 against the confirmed UTXO set, so a transaction that spends an unconfirmed output is refused, and a transaction that spends an output already spent by a pooled transaction is refused.
-- Unknown commands are ignored. `addr` messages are ignored.
+- Unknown commands are ignored. An `addr` message is read once per session and only by the node that sent `getaddr`; any other `addr` message is ignored.
+- The `port` of `version` is the port on which the sender accepts connections, or 0 when it accepts none from other machines.
 
 ### 8.3 Limits
 
@@ -276,12 +279,15 @@ Framing: `magic (4) || command (12, ASCII, zero padded) || length (u32) || check
 | blocks asked for with one `getdata` while synchronising | 16 |
 | side-branch models kept | 64 |
 | locator | 64 ids |
+| entries in `addr` | 100 |
 | user agent | 256 bytes |
 | mempool | 300 MiB of serialised transactions |
 
 ### 8.4 Peers
 
-Peers are chosen by the operator: the node dials the peers it is given, as `HOST:PORT` where a name is resolved at every dial, and accepts inbound connections up to the limit (8 by default, `--max-peers`). Without any peer it dials the default seeds of the network, a local policy. It learns no address from the network.
+Peers are chosen by the operator: the node dials the peers it is given, as `HOST:PORT` where a name is resolved at every dial, and accepts inbound connections up to the limit (8 by default, `--max-peers`). Without any peer it dials the default seeds of the network, a local policy.
+
+Address book (local policy). A node keeps the addresses it hears of: the peers it dialled, the address of an inbound peer with the port of its `version` when that port is not 0, and the entries of the `addr` it asked for. It sends `getaddr` after the handshake on the connections it opened. An address is good once the node has completed a handshake with it on a connection it opened itself; for an address it was only told about, it opens a connection, completes the handshake and closes it. A node answers `getaddr` with at most 100 good addresses, without those of the IP address that asks, so an address travels only as far as the nodes that reached it. The reference node keeps at most 1000 addresses and at most 8 per /16 of IPv4 or /32 of IPv6, refuses loopback, private and link-local addresses and port 0, waits between two attempts on one address from 2 minutes, doubling, up to about an hour, and drops an address after 10 attempts in a row without a handshake while it has other peers. It keeps two connections to good addresses besides its seeds, unless its peers were given with `--connect` or `--no-seeds`. The book is the file `peers.txt` of the data directory.
 
 ## 9. Storage
 
@@ -302,4 +308,3 @@ c17efcbddc34ccea2182bc69e1f43b19f237a824c9aa083fb2cc7df87b4d020a  node/vectors/n
 
 - Header `version` other than 1, ordinary transaction `version` other than 1, and lock types other than 1 and 2: a block or transaction that uses one is invalid.
 - Work service frame type 3, with a 32-byte target as payload: a node ignores it.
-- The entries of `addr`: a node sends `addr` with a count of 0 and ignores the entries it receives.

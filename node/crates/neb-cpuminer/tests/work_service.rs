@@ -61,6 +61,7 @@ fn mine_and_check(kind: EngineKind) -> Arc<Engine> {
         protocol_version: 1,
         max_peers: 8,
         user_agent: "neb-test",
+        dataset_names: &[],
         genesis: demo::easy_genesis(t0),
         chain: demo::easy_params(t0, demo::PROJECT_LOCK),
     };

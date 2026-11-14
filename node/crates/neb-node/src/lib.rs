@@ -8,7 +8,9 @@
 //! storage, ports).
 
 pub mod budget;
+pub mod carry;
 pub mod daemon;
+pub mod mainnet;
 pub mod miners;
 pub mod node;
 pub mod p2p;
@@ -18,4 +20,4 @@ pub mod shares;
 pub mod style;
 
 pub use node::{BlockOutcome, Node, NodeConfig, NodeError};
-pub use params::{NetworkParams, testnet};
+pub use params::{Network, NetworkParams, testnet};

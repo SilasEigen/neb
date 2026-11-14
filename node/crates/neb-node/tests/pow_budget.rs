@@ -41,6 +41,7 @@ fn network(easy: bool, magic: u8) -> NetworkParams {
         protocol_version: 1,
         max_peers: 8,
         user_agent: "neb-test",
+        dataset_names: &[],
         genesis: if easy { demo::easy_genesis(T0) } else { demo::genesis(T0) },
         chain: if easy { demo::easy_params(T0, demo::PROJECT_LOCK) } else { demo::demo_params(T0, demo::PROJECT_LOCK) },
     }

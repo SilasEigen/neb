@@ -1,0 +1,221 @@
+//! Parameters and genesis block of the main network (spec/node.md section 6.6).
+//!
+//! The rules are those of the test network; what differs is listed here. The two model slots hold the convolutional
+//! datasets from the genesis block (spec/nebhash-v2.md), with no dataset upgrade. The genesis coinbase pays, after
+//! the reward of height 0, the carry-over of the two test networks: every lock receives a tenth of its balance on
+//! each (`crate::carry`), on the same lock, so the wallet file of a tester holds its coins. These outputs are
+//! coinbase outputs of height 0 and mature after 100 blocks, like any reward.
+//!
+//! The launch values ([`BEACON`], [`GENESIS_TIME`], [`GENESIS_BITS`], the list of the second test network and the
+//! relays) are provisional until the launch is announced: this build has no relay to dial and its genesis is not
+//! the genesis of the network.
+
+use std::collections::BTreeMap;
+
+use neb_block::Header;
+use neb_chain::Block;
+use neb_chain::state::{ChainParams, project_share, subsidy};
+use neb_chain::tx::{LOCK_MULTISIG, LOCK_SINGLE, Transaction, TxIn, TxOut};
+use neb_pow::shares::SharedDataset;
+
+use crate::carry::{Lock, merge, parse_lines};
+use crate::params::{GENESIS_MINER_LOCK, POW_LIMIT_BITS, project_share_lock};
+
+pub const NAME: &str = "mainnet";
+pub const DEFAULT_DATADIR: &str = "neb-data";
+
+/// Provisional. At launch: the hash of a block of an external public chain mined after the launch time is
+/// announced, so that nobody could build on this genesis before the announcement.
+pub const BEACON: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Provisional: 2026-11-14 00:00:00 UTC. At launch: the announced start, in the future of the release, so that
+/// block 1 cannot be dated earlier and the difficulty schedule does not start late.
+pub const GENESIS_TIME: u32 = 1_794_614_400;
+
+/// Provisional: the target of the genesis block and the ASERT anchor, set at launch from the attempt rate of the
+/// test network. The pow limit stays the easy target of the test network, 2^236: the genesis time is not in the
+/// past, so no catch-up burst can use it, and a network slower than expected still finds blocks.
+pub const GENESIS_BITS: u32 = 0xC1FE_8780;
+
+/// The datasets of the network file, in slot order: the Kepler DR24 transit signals for the KEP1 network and the
+/// OCTMNIST scans at 64 x 64, normal or abnormal, for the RET2 network. The names are those of the test network.
+pub const DATASET_NAMES: [&str; 2] = ["kepler-v2", "retina64"];
+
+/// BLAKE3 of the dataset set file of the main network: the last two datasets of the file of the test network.
+pub const DATASET_HASH: [u8; 32] = [
+    0xfb, 0xab, 0xd0, 0xbd, 0xde, 0x0b, 0x43, 0xae, 0xf9, 0x46, 0xe7, 0x03, 0x1f, 0xf6, 0xe0, 0x37, 0xc8, 0xa2, 0xa5,
+    0xd0, 0xae, 0x26, 0x16, 0xb4, 0x9b, 0x2b, 0x49, 0xb1, 0x1a, 0xf8, 0x01, 0x0e,
+];
+
+/// Public relays of the main network. Empty until the launch.
+pub const DEFAULT_SEEDS: [&str; 0] = [];
+
+/// Carry-over of the first test network at its last block, height 3001
+/// (`f2d0fe4dd450d5d56fd2a6959daf7c28cf71e6d52c00aa83146eb35c50b30f16`).
+const CARRY_TESTNET1: &str = include_str!("../data/carry-testnet1.txt");
+
+/// Carry-over of the second test network. Provisional: a trial at height 9600; at launch, the list at the height
+/// announced in advance, made by `examples/carry_over.rs`.
+const CARRY_TESTNET2: &str = include_str!("../data/carry-testnet2.txt");
+
+/// The carry-over of every lock: the sum of its lines in the lists of the two test networks.
+pub fn carry_list() -> BTreeMap<Lock, u64> {
+    let lists = [CARRY_TESTNET1, CARRY_TESTNET2].map(|text| parse_lines(text).expect("a built-in list is well formed"));
+    merge(&lists).expect("the carry-over is below the supply")
+}
+
+/// Coinbase witness of spec/node.md section 6.6, 44 bytes: `height (u32 LE, 0) || extranonce (8) || miner data (32)`,
+/// derived from the beacon with the tags of the main network.
+fn genesis_witness() -> Vec<u8> {
+    let mut witness = Vec::with_capacity(44);
+    witness.extend_from_slice(&0u32.to_le_bytes());
+    let mut extranonce = blake3::Hasher::new();
+    extranonce.update(b"neb-mainnet-extranonce");
+    extranonce.update(BEACON.as_bytes());
+    witness.extend_from_slice(&extranonce.finalize().as_bytes()[..8]);
+    let mut miner_data = blake3::Hasher::new();
+    miner_data.update(b"neb-mainnet-beacon-1");
+    miner_data.update(BEACON.as_bytes());
+    witness.extend_from_slice(miner_data.finalize().as_bytes());
+    witness
+}
+
+/// The genesis block: one coinbase paying the reward of height 0 less the project share to the lock that no key
+/// can unlock, the project share to the project multisig, then the carry-over of every lock by increasing lock;
+/// no shares; nonce 0. Its proof of work is not checked.
+pub fn genesis() -> Block {
+    let reward = subsidy(0);
+    let share = project_share(reward);
+    let mut outputs = vec![
+        TxOut { amount: reward - share, lock_type: LOCK_SINGLE, lock_data: GENESIS_MINER_LOCK },
+        TxOut { amount: share, lock_type: LOCK_MULTISIG, lock_data: project_share_lock() },
+    ];
+    outputs.extend(carry_list().into_iter().map(|((lock_type, lock_data), amount)| TxOut {
+        amount,
+        lock_type,
+        lock_data,
+    }));
+    let coinbase = Transaction {
+        version: 1,
+        inputs: vec![TxIn { prev_txid: [0u8; 32], prev_index: 0xFFFF_FFFF, witness: genesis_witness() }],
+        outputs,
+    };
+    let mut block = Block {
+        header: Header {
+            version: 1,
+            parent: [0u8; 32],
+            body_root: [0u8; 32],
+            time: GENESIS_TIME,
+            bits: GENESIS_BITS,
+            nonce: 0,
+        },
+        txs: vec![coinbase],
+        shares: Vec::new(),
+    };
+    block.header.body_root = block.body_root();
+    block
+}
+
+pub fn chain_params(datasets: Vec<SharedDataset>) -> ChainParams {
+    ChainParams {
+        difficulty: neb_difficulty::Params {
+            spacing: neb_difficulty::SPACING,
+            half_life: neb_difficulty::HALF_LIFE,
+            pow_limit_bits: POW_LIMIT_BITS,
+            anchor_bits: GENESIS_BITS,
+            anchor_time: GENESIS_TIME,
+        },
+        project_share_lock: project_share_lock(),
+        datasets,
+        upgrades: Vec::new(),
+    }
+}
+
+/// The four-byte network magic, `BLAKE3("neb-mainnet-magic" || genesis id)[..4]` (spec/node.md section 8.2).
+pub fn magic() -> [u8; 4] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"neb-mainnet-magic");
+    hasher.update(&genesis().id());
+    hasher.finalize().as_bytes()[..4].try_into().expect("four bytes")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use neb_chain::ChainState;
+    use neb_pow::shares::{Arch, SyntheticDataset2};
+
+    use super::*;
+    use crate::params::{self, Network};
+
+    fn datasets() -> Vec<SharedDataset> {
+        vec![Arc::new(SyntheticDataset2::new(Arch::Kep1)), Arc::new(SyntheticDataset2::new(Arch::Ret2))]
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    // The two lists as they were computed: their hashes are those printed by the tools that made them.
+    #[test]
+    fn the_built_in_lists_are_the_computed_ones() {
+        let hash = |text: &str| blake3::hash(text.replace("\r\n", "\n").as_bytes()).to_hex().to_string();
+        assert_eq!(hash(CARRY_TESTNET1), "05b0f48dc4d698530016c147e9ba56aef24f4237183fae568233fb9d42eda32c");
+        assert_eq!(hash(CARRY_TESTNET2), "65a074a23006761f952bf0b166593c42704db3b682a98c04564501150cf43a72");
+        let (one, two) = (parse_lines(CARRY_TESTNET1).unwrap(), parse_lines(CARRY_TESTNET2).unwrap());
+        assert_eq!((one.len(), one.values().sum::<u64>()), (69, 570_190_000_000));
+        assert_eq!((two.len(), two.values().sum::<u64>()), (134, 1_823_999_999_963));
+        assert_eq!(carry_list().len(), 190);
+    }
+
+    #[test]
+    fn the_genesis_pays_the_reward_then_the_carry_over_of_every_lock() {
+        let genesis = genesis();
+        assert!(genesis.body_ok());
+        assert_eq!(
+            Block::decode(&genesis.encode()).as_ref(),
+            Ok(&genesis),
+            "a genesis of more outputs than a transaction may hold decodes"
+        );
+        let outputs = &genesis.txs[0].outputs;
+        let list = carry_list();
+        assert_eq!(outputs.len(), 2 + list.len());
+        assert_eq!(
+            (outputs[0].amount, outputs[0].lock_data),
+            (subsidy(0) - project_share(subsidy(0)), GENESIS_MINER_LOCK)
+        );
+        assert_eq!((outputs[1].amount, outputs[1].lock_data), (project_share(subsidy(0)), project_share_lock()));
+        for (out, (lock, amount)) in outputs[2..].iter().zip(&list) {
+            assert_eq!(((out.lock_type, out.lock_data), out.amount), (*lock, *amount));
+        }
+        // neither the lock that no key opens nor the project receives a carry-over
+        assert!(!list.contains_key(&(LOCK_SINGLE, GENESIS_MINER_LOCK)));
+        assert!(!list.contains_key(&(LOCK_MULTISIG, project_share_lock())));
+    }
+
+    #[test]
+    fn the_chain_starts_with_the_carry_over_unspent_and_the_convolutional_models() {
+        let net = Network::Mainnet.params(datasets());
+        let state = ChainState::from_genesis(net.chain.clone(), net.genesis.clone()).expect("genesis");
+        let carried: u128 = carry_list().values().map(|&a| u128::from(a)).sum();
+        assert!(state.conservation());
+        assert_eq!(state.unspent_total(), u128::from(subsidy(0)) + carried);
+        assert_eq!(state.utxos().len(), 2 + carry_list().len());
+        assert!(state.utxos().values().all(|u| u.coinbase && u.height == 0), "the carry-over matures like a reward");
+        let models = state.tip_models();
+        assert_eq!((models[0].arch(), models[1].arch()), (Arch::Kep1, Arch::Ret2));
+        assert_eq!((net.chain.slots(), net.chain.check_upgrades()), (2, Ok(())));
+    }
+
+    #[test]
+    fn the_two_networks_do_not_share_an_identity() {
+        let (main, test) = (Network::Mainnet.params(datasets()), Network::Testnet);
+        assert_eq!((main.name, main.dataset_names), ("mainnet", &DATASET_NAMES[..]));
+        assert_ne!(main.chain_id(), params::genesis_id());
+        assert_ne!(main.magic, params::magic());
+        assert_ne!(Network::Mainnet.default_datadir(), test.default_datadir());
+        assert!(Network::Mainnet.default_seeds().is_empty(), "no relay before the launch");
+        assert_eq!(hex(&DATASET_HASH), "fbabd0bdde0b43aef946e7031ff6e037c8a2a5d0ae2616b49b2b49b11af8010e");
+    }
+}

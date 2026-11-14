@@ -117,6 +117,7 @@ fn the_gpu_worker_finds_blocks_and_the_next_block_lists_its_shares() {
         protocol_version: 1,
         max_peers: 8,
         user_agent: "neb-test",
+        dataset_names: &[],
         genesis: demo::easy_genesis(t0),
         chain: demo::easy_params(t0, demo::PROJECT_LOCK),
     };
@@ -188,6 +189,7 @@ fn easy_node(magic_last: u8, name: &str) -> (Node, std::path::PathBuf) {
         protocol_version: 1,
         max_peers: 8,
         user_agent: "neb-test",
+        dataset_names: &[],
         genesis: demo::easy_genesis(t0),
         chain: demo::easy_params(t0, demo::PROJECT_LOCK),
     };

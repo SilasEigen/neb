@@ -33,6 +33,7 @@ fn test_network() -> NetworkParams {
         protocol_version: 1,
         max_peers: 8,
         user_agent: "neb-test",
+        dataset_names: &[],
         genesis: demo::genesis(T0),
         chain: demo::demo_params(T0, demo::PROJECT_LOCK),
     }

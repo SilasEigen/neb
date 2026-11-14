@@ -161,6 +161,7 @@ fn the_gpu_worker_mines_blocks_that_the_node_accepts_with_every_kernel() {
                 protocol_version: 1,
                 max_peers: 8,
                 user_agent: "neb-test",
+                dataset_names: &[],
                 genesis: demo::easy_genesis(t0),
                 chain: demo::easy_params(t0, demo::PROJECT_LOCK),
             };

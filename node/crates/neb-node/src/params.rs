@@ -1,5 +1,6 @@
 //! Network parameters and the deterministic genesis block of the testnet
-//! (spec/node.md section 6.6; values in docs/testnet.md).
+//! (spec/node.md section 6.6; values in docs/testnet.md), and the choice between the networks of this build
+//! ([`Network`]; the main network is in `mainnet.rs`).
 //!
 //! The genesis block is a pure function of the beacon string and the constants
 //! below: every node derives the same bytes, so the genesis id (the chain id)
@@ -23,6 +24,8 @@ use neb_chain::state::{ChainParams, Upgrade, project_share, subsidy};
 use neb_chain::tx::{COIN, LOCK_MULTISIG, LOCK_SINGLE, Transaction, TxIn, TxOut};
 use neb_chain::{Block, ChainState};
 use neb_pow::shares::{SharedDataset, load_datasets};
+
+use crate::mainnet;
 
 /// Beacon of spec/node.md section 6.6: the hash of the first block of an external
 /// public chain in the usual display order, as 64 lower-case hexadecimal characters.
@@ -188,18 +191,9 @@ pub fn chain_params(datasets: Vec<SharedDataset>) -> ChainParams {
     }
 }
 
-/// Reads the dataset set file and checks it against the pinned hash and the number of slots.
+/// Reads the dataset set file of the test network and checks it against the pinned hash and the number of datasets.
 pub fn load_dataset(path: &Path) -> Result<Vec<SharedDataset>, String> {
-    let sets = load_datasets(path, Some(&DATASET_HASH))?;
-    if sets.len() != DATASET_NAMES.len() {
-        return Err(format!(
-            "{} holds {} datasets, the network has {}",
-            path.display(),
-            sets.len(),
-            DATASET_NAMES.len()
-        ));
-    }
-    Ok(sets)
+    Network::Testnet.load_dataset(path)
 }
 
 pub fn genesis_id() -> [u8; 32] {
@@ -227,6 +221,8 @@ pub struct NetworkParams {
     pub protocol_version: u32,
     pub max_peers: usize,
     pub user_agent: &'static str,
+    /// Names of the datasets of the network file, in file order.
+    pub dataset_names: &'static [&'static str],
     pub genesis: Block,
     pub chain: ChainParams,
 }
@@ -250,8 +246,84 @@ pub fn testnet(dataset: Vec<SharedDataset>) -> NetworkParams {
         protocol_version: PROTOCOL_VERSION,
         max_peers: MAX_PEERS,
         user_agent: USER_AGENT,
+        dataset_names: &DATASET_NAMES,
         genesis,
         chain: chain_params(dataset),
+    }
+}
+
+/// The networks that this build knows. A node runs one of them; they share the rules and differ by the values of
+/// this module and of [`crate::mainnet`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Network {
+    Mainnet,
+    Testnet,
+}
+
+impl Network {
+    pub fn name(self) -> &'static str {
+        match self {
+            Network::Mainnet => mainnet::NAME,
+            Network::Testnet => NAME,
+        }
+    }
+
+    pub fn default_datadir(self) -> &'static str {
+        match self {
+            Network::Mainnet => mainnet::DEFAULT_DATADIR,
+            Network::Testnet => DEFAULT_DATADIR,
+        }
+    }
+
+    /// Public relays that a node dials when it is given no `--connect`, no `--seed` and no `--no-seeds`.
+    pub fn default_seeds(self) -> &'static [&'static str] {
+        match self {
+            Network::Mainnet => &mainnet::DEFAULT_SEEDS,
+            Network::Testnet => &DEFAULT_SEEDS,
+        }
+    }
+
+    pub fn dataset_names(self) -> &'static [&'static str] {
+        match self {
+            Network::Mainnet => &mainnet::DATASET_NAMES,
+            Network::Testnet => &DATASET_NAMES,
+        }
+    }
+
+    /// BLAKE3 of the dataset set file of the network. A node refuses to start on another file.
+    pub fn dataset_hash(self) -> [u8; 32] {
+        match self {
+            Network::Mainnet => mainnet::DATASET_HASH,
+            Network::Testnet => DATASET_HASH,
+        }
+    }
+
+    /// Reads the dataset set file and checks it against the pinned hash and the number of datasets of the network.
+    pub fn load_dataset(self, path: &Path) -> Result<Vec<SharedDataset>, String> {
+        let sets = load_datasets(path, Some(&self.dataset_hash()))?;
+        if sets.len() != self.dataset_names().len() {
+            return Err(format!(
+                "{} holds {} datasets, the network has {}",
+                path.display(),
+                sets.len(),
+                self.dataset_names().len()
+            ));
+        }
+        Ok(sets)
+    }
+
+    pub fn params(self, datasets: Vec<SharedDataset>) -> NetworkParams {
+        match self {
+            Network::Testnet => testnet(datasets),
+            Network::Mainnet => NetworkParams {
+                name: mainnet::NAME,
+                magic: mainnet::magic(),
+                dataset_names: &mainnet::DATASET_NAMES,
+                genesis: mainnet::genesis(),
+                chain: mainnet::chain_params(datasets),
+                ..testnet(Vec::new())
+            },
+        }
     }
 }
 

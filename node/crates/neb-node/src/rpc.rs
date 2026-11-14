@@ -275,7 +275,7 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             map.insert("version".to_string(), Value::String(env!("CARGO_PKG_VERSION").into()));
             map.insert("protocolversion".to_string(), Value::Number(net.protocol_version as i64));
             map.insert("network".to_string(), Value::String(net.name.into()));
-            map.insert("testnet".to_string(), Value::Bool(true));
+            map.insert("testnet".to_string(), Value::Bool(net.name == crate::params::NAME));
             map.insert("blocks".to_string(), Value::Number(node.height() as i64));
             map.insert("bestblockhash".to_string(), Value::String(hex(&node.tip_id())));
             map.insert("chainid".to_string(), Value::String(hex(&node.chain_id())));
@@ -307,7 +307,7 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             }
             let slot = slot as usize;
             let (height, id, models) = if genesis {
-                (0, node.chain_id(), neb_chain::initial_models(&node.chain_id(), k))
+                (0, node.chain_id(), chain.genesis_models(&node.chain_id()))
             } else {
                 loop {
                     // the tip is read again after its state, so the three values belong to the same block
@@ -325,7 +325,7 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             map.insert("slot".to_string(), Value::Number(slot as i64));
             map.insert("slots".to_string(), Value::Number(k as i64));
             // the dataset this model is mined and trained on (an upgrade changes it from a height on)
-            let name = crate::params::DATASET_NAMES.get(chain.dataset_index_of(slot, height)).copied().unwrap_or("");
+            let name = node.network().dataset_names.get(chain.dataset_index_of(slot, height)).copied().unwrap_or("");
             map.insert("dataset".to_string(), Value::String(name.into()));
             map.insert("weightshash".to_string(), Value::String(hex(&model.weights_hash())));
             map.insert("weights".to_string(), Value::String(hex(&model.packed_weights())));

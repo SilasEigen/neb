@@ -42,6 +42,7 @@ fn network_with_project(miner_lock: [u8; 32], project_lock: [u8; 32]) -> Network
         protocol_version: 1,
         max_peers: 8,
         user_agent: "neb-test",
+        dataset_names: &[],
         genesis: demo::genesis_to(T0, miner_lock),
         chain: demo::demo_params(T0, project_lock),
     }

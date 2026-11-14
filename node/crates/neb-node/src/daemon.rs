@@ -19,7 +19,7 @@ use neb_work::frames::{self, FrameOut, Hello, MSG_HELLO, MSG_SHARE, MSG_SUBMIT, 
 use crate::budget::DEFAULT_POW_BUDGET;
 use crate::miners::MinerWriter;
 use crate::node::{Node, NodeConfig, now};
-use crate::params;
+use crate::params::{self, Network};
 use crate::style::{ColorMode, Live, Log};
 
 fn hex(bytes: &[u8]) -> String {
@@ -38,6 +38,7 @@ fn parse_hex32(s: &str) -> Option<[u8; 32]> {
 }
 
 struct Options {
+    network: Network,
     dataset: Option<String>,
     datadir: String,
     listen: String,
@@ -54,9 +55,12 @@ struct Options {
 }
 
 fn parse_options(args: &[String]) -> Result<Options, String> {
+    // the network decides the default data directory, wherever the flag stands
+    let network = if args.iter().any(|a| a == "--testnet") { Network::Testnet } else { Network::Mainnet };
     let mut options = Options {
+        network,
         dataset: None,
-        datadir: params::DEFAULT_DATADIR.into(),
+        datadir: network.default_datadir().into(),
         listen: "127.0.0.1".into(),
         p2p_port: params::P2P_PORT,
         work_port: params::WORK_PORT,
@@ -109,6 +113,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 options.no_seeds = true;
                 i += 1;
             }
+            "--testnet" => i += 1,
             "--max-peers" => {
                 options.max_peers = value(i)?
                     .parse()
@@ -213,17 +218,21 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
     let Some(dataset_path) = &options.dataset else {
-        eprintln!("neb-node --run: --dataset FILE is required (see tools/make_mnist_dataset.py)");
+        eprintln!("neb-node --run: --dataset FILE is required (the dataset file of the network)");
         return 2;
     };
-    let dataset = match params::load_dataset(std::path::Path::new(dataset_path)) {
+    let dataset = match options.network.load_dataset(std::path::Path::new(dataset_path)) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("cannot load the dataset: {e}");
+            eprintln!(
+                "this node runs on {}, which has its own dataset file; the test network needs --testnet",
+                options.network.name()
+            );
             return 1;
         }
     };
-    let mut configured = params::testnet(dataset);
+    let mut configured = options.network.params(dataset);
     configured.p2p_port = options.p2p_port;
     configured.work_port = options.work_port;
     configured.rpc_port = options.rpc_port;
@@ -283,7 +292,7 @@ pub fn run(args: &[String]) -> i32 {
     let seeds: Vec<String> = if options.no_seeds || !options.connects.is_empty() || !options.seeds.is_empty() {
         options.seeds.clone()
     } else {
-        params::DEFAULT_SEEDS.iter().map(|s| s.to_string()).collect()
+        options.network.default_seeds().iter().map(|s| s.to_string()).collect()
     };
     for target in &seeds {
         if !is_target(target) {
@@ -511,6 +520,17 @@ mod tests {
         assert!(resolve("localhost:3440").iter().all(|a| a.port() == 3440 && a.ip().is_loopback()));
         assert!(!resolve("localhost:3440").is_empty());
         assert!(resolve("no-such-host.invalid:3440").is_empty());
+    }
+
+    #[test]
+    fn the_network_is_the_main_one_unless_the_test_network_is_asked() {
+        let main = parse_options(&[]).unwrap();
+        assert_eq!((main.network, main.datadir.as_str()), (Network::Mainnet, "neb-data"));
+        // the flag may stand anywhere, and an explicit data directory wins
+        let test = parse_options(&args(&["--no-seeds", "--testnet"])).unwrap();
+        assert_eq!((test.network, test.datadir.as_str()), (Network::Testnet, "neb-testnet2-data"));
+        let kept = parse_options(&args(&["--datadir", "d", "--testnet"])).unwrap();
+        assert_eq!((kept.network, kept.datadir.as_str()), (Network::Testnet, "d"));
     }
 
     #[test]

@@ -9,7 +9,7 @@
 
 use neb_block::{Header, Target};
 use neb_difficulty::{HALF_LIFE, Params, SPACING};
-use neb_node::params;
+use neb_node::{Network, mainnet, params};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -24,7 +24,7 @@ fn main() {
         Some("--chain-selftest") => chain_selftest(),
         Some("--work-selftest") => work_selftest(),
         Some("--run") => neb_node::daemon::run(&args[1..]),
-        Some("--genesis") => print_genesis(),
+        Some("--genesis") => print_genesis(&args[1..]),
         Some("--dataset-hash") => dataset_hash(args.get(1)),
         Some("--model-accuracy") => model_accuracy(&args[1..]),
         Some("--help") | Some("-h") | None => {
@@ -46,7 +46,7 @@ fn print_version() {
 
 fn print_help() {
     println!(
-        "neb-node: the NEB testnet full node\n\n\
+        "neb-node: the NEB full node (main network; --testnet for the test network)\n\n\
 usage:\n\
   neb-node --version         print the version\n\
   neb-node --check-hardware  print the CPU and the proof-check path\n\
@@ -54,11 +54,11 @@ usage:\n\
   neb-node --shares-selftest replay the published training-share vectors\n\
   neb-node --chain-selftest  connect a demo chain and reorganise it\n\
   neb-node --work-selftest   build a job, submit it, connect the block\n\
-  neb-node --genesis         print the testnet genesis and network parameters\n\
+  neb-node --genesis [--testnet]  print the genesis and the network parameters\n\
   neb-node --dataset-hash F  print the BLAKE3 hash of a dataset file\n\
-  neb-node --model-accuracy --dataset F --datadir D [--samples N]\n\
+  neb-node --model-accuracy [--testnet] --dataset F --datadir D [--samples N]\n\
                              accuracy of the chain model on the first N samples\n\
-  neb-node --run --dataset F [options]  run the testnet node (see docs/testnet.md)"
+  neb-node --run [--testnet] --dataset F [options]  run the node (see docs/testnet.md)"
     );
 }
 
@@ -272,21 +272,32 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn print_genesis() -> i32 {
-    let genesis = params::genesis();
+/// The network of a command line: the test network with `--testnet`, the main network without.
+fn network_of(args: &[String]) -> Network {
+    if args.iter().any(|a| a == "--testnet") { Network::Testnet } else { Network::Mainnet }
+}
+
+fn print_genesis(args: &[String]) -> i32 {
+    let network = network_of(args);
+    let net = network.params(Vec::new());
+    let genesis = &net.genesis;
     let id = genesis.id();
-    println!("network     : {}", params::NAME);
-    println!("beacon      : {}", params::BEACON);
+    println!("network     : {}", net.name);
+    println!("beacon      : {}", if network == Network::Testnet { params::BEACON } else { mainnet::BEACON });
     println!("genesis id  : {}", hex(&id));
     println!("genesis time: {}", genesis.header.time);
     println!("genesis bits: 0x{:08x}", genesis.header.bits);
     println!("pow limit   : 0x{:08x}", params::POW_LIMIT_BITS);
-    println!("magic       : {}", hex(&params::magic()));
-    println!("p2p port    : {}", params::P2P_PORT);
-    println!("work port   : {}", params::WORK_PORT);
-    println!("rpc port    : {}", params::RPC_PORT);
-    println!("dataset hash: {}", hex(&params::DATASET_HASH));
-    println!("miner lock  : {} (no key: the genesis coins cannot be spent)", hex(&params::GENESIS_MINER_LOCK));
+    println!("magic       : {}", hex(&net.magic));
+    println!("p2p port    : {}", net.p2p_port);
+    println!("work port   : {}", net.work_port);
+    println!("rpc port    : {}", net.rpc_port);
+    println!("dataset hash: {}", hex(&network.dataset_hash()));
+    println!("outputs     : {} in the genesis coinbase", genesis.txs[0].outputs.len());
+    println!(
+        "miner lock  : {} (no key: the reward of the genesis block cannot be spent)",
+        hex(&params::GENESIS_MINER_LOCK)
+    );
     println!("project key : {}", hex(&params::PROJECT_PUBLIC_KEY));
     println!("project lock: {}", hex(&params::project_share_lock()));
     0
@@ -296,7 +307,9 @@ fn print_genesis() -> i32 {
 // the initial model and the model of the tip classify correctly. The data
 // directory must not be in use by a running node.
 fn model_accuracy(args: &[String]) -> i32 {
-    const USAGE: &str = "usage: neb-node --model-accuracy --dataset FILE --datadir DIR [--samples N]";
+    const USAGE: &str = "usage: neb-node --model-accuracy [--testnet] --dataset FILE --datadir DIR [--samples N]";
+    let network = network_of(args);
+    let args: Vec<String> = args.iter().filter(|a| *a != "--testnet").cloned().collect();
     let (mut dataset, mut datadir, mut samples) = (None, None, 2000u32);
     for pair in args.chunks(2) {
         match (pair[0].as_str(), pair.get(1)) {
@@ -320,21 +333,21 @@ fn model_accuracy(args: &[String]) -> i32 {
         eprintln!("{USAGE}");
         return 2;
     };
-    let ds = match params::load_dataset(std::path::Path::new(&dataset)) {
+    let ds = match network.load_dataset(std::path::Path::new(&dataset)) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("cannot load the dataset: {e}");
             return 1;
         }
     };
-    let node = match neb_node::Node::open(neb_node::NodeConfig::new(params::testnet(ds.clone()), &datadir)) {
+    let node = match neb_node::Node::open(neb_node::NodeConfig::new(network.params(ds.clone()), &datadir)) {
         Ok(n) => n,
         Err(e) => {
             eprintln!("cannot open {datadir}: {e}");
             return 1;
         }
     };
-    let chain = params::chain_params(ds.clone());
+    let chain = node.network().chain.clone();
     let tip = node.tip_models();
     let height = node.height();
     println!("height {height}  models {}", hex(&node.weights_hash()));
@@ -342,13 +355,13 @@ fn model_accuracy(args: &[String]) -> i32 {
         // the dataset the slot learns now, and the model it started from on that dataset
         let index = chain.dataset_index_of(slot, height);
         let d = &ds[index];
-        let initial = chain.initial_model_of(&params::genesis_id(), slot, height);
+        let initial = chain.initial_model_of(&node.chain_id(), slot, height);
         let n = samples.min(d.n());
         let right = |m: &neb_pow::shares::Model| {
             let mut x = vec![0u8; d.arch().nin()];
             (0..n).filter(|&i| d.sample(i, &mut x) == m.predict_sample(&x)).count()
         };
-        let name = params::DATASET_NAMES.get(index).copied().unwrap_or("?");
+        let name = network.dataset_names().get(index).copied().unwrap_or("?");
         println!("slot {slot} ({name}): initial model {} of {n} correct", right(&initial));
         println!("slot {slot} ({name}): chain model   {} of {n} correct", right(&tip[slot]));
     }

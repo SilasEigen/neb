@@ -126,7 +126,8 @@ pub fn decrypt(text: &str, password: &str) -> Result<String, EncryptionError> {
 mod tests {
     use super::*;
 
-    const PLAIN: &str = "# neb testnet wallet: one 64-hex secret per line\n0101010101010101010101010101010101010101010101010101010101010101\n";
+    const PLAIN: &str =
+        "# neb wallet: one 64-hex secret per line\n0101010101010101010101010101010101010101010101010101010101010101\n";
 
     // The plain text comes back with the right password, and the secret never appears in the file.
     #[test]

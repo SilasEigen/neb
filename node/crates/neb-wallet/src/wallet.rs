@@ -245,7 +245,7 @@ impl Wallet {
     /// Writes `keys` to the key file. A file created here has mode 0600 on
     /// Unix; the mode of an existing file is kept.
     fn write_keys(&self, keys: &[WalletKey]) -> Result<(), WalletError> {
-        let mut text = String::from("# neb testnet wallet: one 64-hex secret per line\n");
+        let mut text = String::from("# neb wallet: one 64-hex secret per line\n");
         for key in keys {
             text.push_str(&key.secret_hex());
             text.push('\n');

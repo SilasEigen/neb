@@ -43,13 +43,21 @@ The tool replays the chain with the rules of the node, every proof of work and e
 `HEIGHT`. It prints the list on the standard output and, on the standard error, the block id at that height, the number of
 locks, the total and the BLAKE3 hash of the list. The block id can be compared with `getblockhash HEIGHT` of any node.
 
+`tools/carry_check.py` is a second computation with a parser and a set of unspent outputs of its own. It checks no
+proof of work and no signature, only the balances:
+
+```
+python -I tools/carry_check.py chain-dump.txt node/crates/neb-node/data/carry-testnet2.txt 12900
+```
+
+It prints `IDENTICAL` when the list it computes is the list of the repository.
+
 The first test network ran protocol 2, which this release does not replay. Its list was made by replaying its chain with
-release 0.1.1, and `tools/carry_check.py` rebuilds it from the dump of that chain with a parser of its own:
+release 0.1.1, and the same script rebuilds it from the dump of that chain, where no block holds a transaction besides
+its coinbase:
 
 ```
 python -I tools/carry_check.py testnet1-dump.txt node/crates/neb-node/data/carry-testnet1.txt
 ```
 
-It prints `IDENTICAL` when the list it computes is the list of the repository. No block of the first test network holds a
-transaction besides its coinbase, so its balances are sums of rewards, and the script refuses a dump where that is not so.
 The dumps of the two chains are published with the release of the main network.

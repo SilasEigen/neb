@@ -17,7 +17,7 @@ a node refuses a block dated more than 120 s ahead of its clock. `docs/mainnet.m
   11.2). Chains whose slots start with the one-hidden-layer network, the test network included, are unchanged.
 - Carry-over (`docs/carry-over.md`): the genesis block pays each lock a tenth of its balance on each of the two
   test networks, as coinbase outputs of height 0. the example `carry_over` of `neb-node` rebuilds the list of the second
-  test network from its chain, and `tools/carry_check.py` checks the list of the first.
+  test network from its chain, and `tools/carry_check.py` computes both lists a second time with its own parser.
 - `--testnet` for `neb-node --run`, `--genesis` and `--model-accuracy`. A test network node needs this option and
   the dataset file of release 0.3.1.
 - Address exchange (`spec/node.md` section 8.4): a node asks the peers it dialled for addresses with `getaddr`,
@@ -25,6 +25,8 @@ a node refuses a block dated more than 120 s ahead of its clock. `docs/mainnet.m
   connections to it besides the relays. A node that listens on 127.0.0.1 announces port 0 and is not offered.
 - `tools/make_mainnet_datasets.py` builds the dataset file of the main network from the file of the test network.
 - The wallet file is the same on both networks; the comment line of a new file no longer names the test network.
+- Work service: a node whose genesis time is ahead of its clock gives no job until a block 1 can be accepted, and
+  says how long is left. A miner connected earlier waits and receives its first job then.
 - `neb-miner-cpu --engine table`: an engine for the convolutional networks that evaluates every sample of the
   dataset once per model state, then builds an attempt from 16 rows of that table. It gives the tickets of the
   reference, which still checks every share and solution before it is reported. Never the default.

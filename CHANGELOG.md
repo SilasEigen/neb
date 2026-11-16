@@ -4,11 +4,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/). The protocol version and the genesis of the network are listed separately from
 the software version: a node checks them, not the software version.
 
-## [1.0.0] - unreleased
+## [1.0.0] - 2026-11-16
 
 The main network. Without an option the software runs it; the test network of protocol 3 stays behind `--testnet`.
-The launch values of the genesis block (time, target, beacon, relays and the list of the second test network) are
-fixed in this release.
+The network starts on 2026-11-18 at 14:00 UTC, the time of its genesis block: block 1 cannot be dated earlier, and
+a node refuses a block dated more than 120 s ahead of its clock. `docs/mainnet.md` lists the launch values.
 
 - Main network (`docs/mainnet.md`): protocol 3, two convolutional models from block 0 (KEP1 on the Kepler transit
   signals, RET2 on the retinal scans), no dataset upgrade, its own tags, genesis, magic and dataset file (two
@@ -25,6 +25,9 @@ fixed in this release.
   connections to it besides the relays. A node that listens on 127.0.0.1 announces port 0 and is not offered.
 - `tools/make_mainnet_datasets.py` builds the dataset file of the main network from the file of the test network.
 - The wallet file is the same on both networks; the comment line of a new file no longer names the test network.
+- `neb-miner-cpu --engine table`: an engine for the convolutional networks that evaluates every sample of the
+  dataset once per model state, then builds an attempt from 16 rows of that table. It gives the tickets of the
+  reference, which still checks every share and solution before it is reported. Never the default.
 
 ## [0.3.1] - 2026-11-12
 

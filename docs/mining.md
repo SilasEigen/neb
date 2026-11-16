@@ -8,13 +8,16 @@ validates every block and share with the C reference, and CI checks that `neb-no
 | component | evaluates tickets with | optimised engines | default |
 |---|---|---|---|
 | node (`neb-node`) | the C reference (`neb-pow`) | none | the reference |
-| CPU miner (`neb-miner-cpu`) | the C reference | AVX-512 VNNI, dense and sparse (`pow/cpu`, crate `neb-engines`): `--engine avx512` or `avx512-dense` | the reference |
+| CPU miner (`neb-miner-cpu`) | the C reference | the table of per-sample gradients for the convolutional networks (crate `neb-engines`): `--engine table`; AVX-512 VNNI, dense and sparse, for the one-hidden-layer network (`pow/cpu`): `--engine avx512` or `avx512-dense` | the reference |
 | GPU miner (`neb-miner-gpu`) | the dp4a kernel K0 (`pow/gpu/shares_cuda.cu`) | the tensor-core kernels K1 and K2 (`pow/gpu/shares_tc.cu`): `--gpu-kernel k1` or `k2` | K0 |
 
-The optimised engines of this table compute the one-hidden-layer network, which only the test network used, before its
-block 8800. The main network has the convolutional networks of `spec/nebhash-v2.md` from its first block: the CPU miner
-runs them with the reference code and the GPU miner with a CUDA kernel that is self-tested against the reference at
-start.
+The AVX-512 engines and the kernels K1 and K2 compute the one-hidden-layer network, which only the test network used,
+before its block 8800. The main network has the convolutional networks of `spec/nebhash-v2.md` from its first block:
+the CPU miner runs them with the reference code or, with `--engine table`, from a table of the gradient of every
+sample of the dataset, built again for each model state (`docs/testnet.md`, "Running the CPU miner"); the GPU miner
+runs them with a CUDA kernel that is self-tested against the reference at start. In an attempt of the reference the
+cost is the forward and backward passes of 16 samples; in an attempt of the table it is 16 rows read and added, so
+the attempt rates of the two differ by a large factor on the same machine.
 
 ## Requirements
 

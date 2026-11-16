@@ -21,8 +21,9 @@
 //! keeps the blocks that the miner found, for the [`dashboard`].
 //!
 //! The attempts are evaluated by an [`Engine`] (`neb-engines`). The default is the C reference, as in the
-//! node. An optimised engine (AVX-512) is used only when the caller asks for it by name and it passes its
-//! self-test; the reference then re-evaluates every share and solution it finds before it is reported.
+//! node. An optimised engine (the table of nebhash v2, AVX-512 for the v1 network) is used only when the caller asks
+//! for it by name and it passes its self-test; the reference then re-evaluates every share and solution it finds
+//! before it is reported.
 
 use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};

@@ -7,9 +7,10 @@
 //! uses; the miner does not check its hash, and a different dataset yields
 //! tickets that the node rejects. `--synthetic` is for demo networks only.
 //!
-//! `--engine` chooses how the attempts are evaluated: `ref` (the C reference, the default), `avx512` (AVX-512 VNNI,
-//! sparse variant), `avx512-sparse` or `avx512-dense`. An optimised engine runs a self-test first and is used only
-//! if it passes and the processor has the instructions; otherwise the miner says why and uses the reference. The
+//! `--engine` chooses how the attempts are evaluated: `ref` (the C reference, the default), `table` (nebhash v2 from
+//! a table of per-sample gradients, about 700 MB of memory for the two datasets of the network), `avx512` (the v1
+//! network with AVX-512 VNNI, sparse variant), `avx512-sparse` or `avx512-dense`. An optimised engine runs a self-test
+//! first and is used only if it passes and the machine can run it; otherwise the miner says why and uses the reference. The
 //! reference re-evaluates every share and solution of an optimised engine before it is reported. `--selftest` runs
 //! that self-test and exits: 0 when the requested engine passed, 1 when it did not.
 //! Exit code: 0 after `q`, 1 when the node closes the connection or cannot be
@@ -25,7 +26,7 @@ use neb_pow::shares::{SharedDataset, SyntheticDataset, load_datasets};
 
 fn usage() -> i32 {
     eprintln!(
-        "usage: neb-miner-cpu --node HOST:PORT (--dataset FILE | --synthetic) [--threads N] [--engine ref|avx512|avx512-sparse|avx512-dense] [--plain]"
+        "usage: neb-miner-cpu --node HOST:PORT (--dataset FILE | --synthetic) [--threads N] [--engine ref|table|avx512|avx512-sparse|avx512-dense] [--plain]"
     );
     eprintln!("       neb-miner-cpu (--dataset FILE | --synthetic) --engine NAME --selftest");
     2

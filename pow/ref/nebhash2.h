@@ -73,6 +73,14 @@ int neb2_model_init(int arch, const uint8_t seed[32], neb2_model *m);
 int neb2_share_eval(const neb2_model *m, const neb2_dataset *ds, const uint8_t key[32], int32_t *g, uint8_t digest[32],
                     uint8_t ticket[32], uint32_t idx[NEB_NB], uint32_t *nclip);
 
+/* One sample alone, for a miner that keeps the gradient of every sample of a model state: g[arch->nweights] gets the
+ * gradient of this sample before the clip, in model order. The gradient of a share (section 4.2) is the entry-wise sum
+ * of the gradients of its NEB_NB samples, clipped afterwards. When fac is not NULL it also gets, for each linear layer
+ * in table order, the cout errors d of the layer then its cin inputs: the gradient of that layer is their outer
+ * product. The consensus rules do not use this function. Returns 0, or -1 when the model's architecture is unknown or
+ * memory runs out. */
+int neb2_sample_grad(const neb2_model *m, const uint8_t *x, int label, int32_t *g, int8_t *fac);
+
 /* The model step (section 5): gs holds the entry-wise sums of the clipped gradients of 1 .. NEB_MAX_SHARES shares. */
 void neb2_model_apply(neb2_model *m, const int32_t *gs);
 

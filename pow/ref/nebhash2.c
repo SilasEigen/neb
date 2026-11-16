@@ -332,6 +332,34 @@ int neb2_share_eval(const neb2_model *m, const neb2_dataset *ds, const uint8_t k
   return 0;
 }
 
+int neb2_sample_grad(const neb2_model *m, const uint8_t *x, int label, int32_t *g, int8_t *fac) {
+  const neb2_arch *A = neb2_arch_get(m->arch);
+  if (!A) return -1;
+  work W;
+  if (work_alloc(A, &W) != 0) return -1;
+  memset(g, 0, (size_t)A->nweights * sizeof(int32_t));
+  const int last = A->nlayers - 1;
+  for (int i = 0; i < A->nlayers; i++) {
+    gather_input(A, &W, i, x);
+    forward_layer(A, m->w + A->l[i].w_off, &W, i);
+  }
+  for (int o = 0; o < NEB2_NOUT; o++) {
+    const int t = (o == label) ? NEB_TPOS : NEB_TNEG;
+    W.b[last].e[o] = clipi(W.b[last].out[o] - t, -8, 7);
+  }
+  for (int i = last; i >= 0; i--) backward_layer(A, m->w + A->l[i].w_off, g + A->l[i].w_off, &W, i);
+  if (fac)
+    for (int i = 0; i < A->nlayers; i++) {
+      const neb2_layer *L = &A->l[i];
+      if (L->kind != NEB2_LINEAR) continue;
+      for (int o = 0; o < L->cout; o++) *fac++ = (int8_t)W.b[i].d[o];
+      memcpy(fac, W.b[i].in, (size_t)L->cin);
+      fac += L->cin;
+    }
+  free(W.mem);
+  return 0;
+}
+
 void neb2_model_apply(neb2_model *m, const int32_t *gs) {
   const neb2_arch *A = neb2_arch_get(m->arch);
   if (!A) return;

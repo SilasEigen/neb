@@ -15,12 +15,14 @@
 //!    attempts are then evaluated by the reference. A hit that an engine misses (a false negative) cannot be
 //!    caught by the verification of hits; the audits and the model check bound that risk but do not remove it.
 //!
-//! Engines: the C reference itself, and the AVX-512 VNNI evaluation in [`avx512`] (dense and sparse variants).
+//! Engines: the C reference itself, the AVX-512 VNNI evaluation of the v1 network in [`avx512`] (dense and sparse
+//! variants), and for nebhash v2 the table of per-sample gradients in [`table`].
 //! The GPU kernels are in `neb-gpuminer`, with the same rules.
 
 pub mod avx512;
 mod engine;
 mod selftest;
+pub mod table;
 
 pub use engine::{AUDIT_INTERVAL, Attempt, Engine, EngineKind, EngineStats, MODEL_CHECK_KEYS, Prepared, Worker};
-pub use selftest::{SelfTestReport, test_models};
+pub use selftest::{SelfTestReport, test_models, test_models_v2};

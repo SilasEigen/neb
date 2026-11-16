@@ -1,10 +1,11 @@
 //! The self-test of an engine: the models and datasets of the C test (`pow/tests/test_shares_avx512.c`), a smaller
 //! number of keys, compared with the reference.
 
-use neb_pow::shares::{Dataset, Model, N1, N2, SyntheticDataset, share_eval, train_step};
+use neb_pow::shares::{Arch, Dataset, Model, N1, N2, SyntheticDataset, SyntheticDataset2, share_eval, train_step};
 
 use crate::avx512::{FlatDataset, PreparedWeights, Scratch};
 use crate::engine::EngineKind;
+use crate::table::Table;
 
 /// Keys compared (digest, ticket, indices) per model and dataset, and the gradients of one key in `GRADIENT_EVERY`.
 const KEYS: u32 = 96;
@@ -88,6 +89,58 @@ pub(crate) fn run(kind: EngineKind, dataset: &dyn Dataset, flat: &FlatDataset) -
                 }
                 report.tickets += 1;
             }
+        }
+    }
+    Ok(report)
+}
+
+/// The v2 models of the table self-test on the synthetic dataset of `arch`: the initial state, a model trained for a
+/// few steps, and three models with extreme weights (all 7, all -8, alternating).
+pub fn test_models_v2(arch: Arch, dataset: &dyn Dataset) -> Vec<(&'static str, Model)> {
+    let mut trained = Model::from_seed_arch(arch, &[0u8; 32]);
+    for s in 0..6u32 {
+        let keys: Vec<[u8; 32]> = (0..16).map(|j| key_for("train2", s as usize, j)).collect();
+        train_step(&mut trained, dataset, &keys).expect("a step of 16 shares");
+    }
+    let packed = |byte: u8| Model::from_packed(arch, &vec![byte; arch.packed_bytes()]).expect("valid weights");
+    vec![
+        ("initial", Model::from_seed_arch(arch, &[0u8; 32])),
+        ("trained", trained),
+        ("all-7", packed(0x77)),
+        ("all--8", packed(0x88)),
+        ("alternating", packed(0x78)),
+    ]
+}
+
+/// Compares the table engine with the reference on the synthetic dataset of `arch`, for every test model: the digest,
+/// the ticket and the indices of every key, and the clipped gradient of one key in `GRADIENT_EVERY`.
+pub(crate) fn run_table(arch: Arch) -> Result<SelfTestReport, String> {
+    let ds = SyntheticDataset2::new(arch);
+    let mut acc = Vec::new();
+    let mut report = SelfTestReport { tickets: 0, gradients: 0 };
+    for (mi, (mname, model)) in test_models_v2(arch, &ds).into_iter().enumerate() {
+        let table = Table::build(&model, &ds, 2, Vec::new())?;
+        for k in 0..KEYS {
+            let key = key_for("table", mi, k);
+            let want = share_eval(&model, &ds, &key);
+            let got = table.eval(&key, &mut acc);
+            let case = || format!("model {mname}, {}, key {k}", arch.name());
+            if k % GRADIENT_EVERY == 0 {
+                if acc[..arch.weights()] != want.g1[..] {
+                    return Err(format!("clipped gradients differ ({})", case()));
+                }
+                report.gradients += 1;
+            }
+            if got.indices != want.indices {
+                return Err(format!("sample indices differ ({})", case()));
+            }
+            if got.digest != want.digest {
+                return Err(format!("gradient digest differs ({})", case()));
+            }
+            if got.ticket != want.ticket {
+                return Err(format!("ticket differs ({})", case()));
+            }
+            report.tickets += 1;
         }
     }
     Ok(report)

@@ -114,6 +114,101 @@ unsafe extern "C" {
     fn neb2_model_apply(m: *mut V2Model, gs: *const i32);
     fn neb2_model_hashes(m: *const V2Model, weights_hash: *mut u8, residual_hash: *mut u8);
     fn neb2_model_predict(m: *const V2Model, x: *const u8) -> c_int;
+    fn neb2_arch_get(id: c_int) -> *const CArch;
+    fn neb2_sample_grad(m: *const V2Model, x: *const u8, label: c_int, g: *mut i32, fac: *mut i8) -> c_int;
+}
+
+/// Mirror of `neb2_layer` in `pow/ref/nebhash2.h`.
+#[repr(C)]
+struct CLayer {
+    kind: c_int,
+    cin: c_int,
+    cout: c_int,
+    k: c_int,
+    stride: c_int,
+    pad: c_int,
+    pool: c_int,
+    s: c_int,
+    sb: c_int,
+    su: c_int,
+    in_len: c_int,
+    in_off: c_int,
+    nsrc: c_int,
+    src: [c_int; 2],
+    conv_len: c_int,
+    out_len: c_int,
+    nw: c_int,
+    w_off: c_int,
+}
+
+/// Mirror of `neb2_arch`.
+#[repr(C)]
+struct CArch {
+    id: c_int,
+    nin: c_int,
+    nlayers: c_int,
+    nweights: c_int,
+    l: [CLayer; 6],
+}
+
+const _: () = assert!(std::mem::size_of::<CArch>() == 4 * (4 + 6 * 19));
+
+/// A weight layer of a v2 architecture, in table order (`spec/nebhash-v2.md` section 3), for a miner that lays out
+/// per-sample gradients.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Layer {
+    /// A linear layer: its gradient for one sample is the outer product of `cout` errors and `cin` inputs.
+    pub linear: bool,
+    pub cin: usize,
+    pub cout: usize,
+    /// Weights of the layer, and offset of its first weight in the model.
+    pub weights: usize,
+    pub offset: usize,
+    /// Positions of the convolution output of one channel (1 for a linear layer): one sample adds at most
+    /// `positions * 64` to the absolute value of a gradient entry of the layer.
+    pub positions: usize,
+}
+
+impl Arch {
+    /// The layers of a v2 architecture, read from the C reference; empty for v1.
+    pub fn layers(self) -> Vec<Layer> {
+        let Some(id) = self.id() else { return Vec::new() };
+        // SAFETY: `neb2_arch_get` returns a pointer to a static table for a known id.
+        let a = unsafe { &*neb2_arch_get(id as c_int) };
+        a.l[..a.nlayers as usize]
+            .iter()
+            .map(|l| {
+                let grid = if l.kind == 2 { l.conv_len * l.conv_len } else { l.conv_len };
+                Layer {
+                    linear: l.kind == 3,
+                    cin: l.cin as usize,
+                    cout: l.cout as usize,
+                    weights: l.nw as usize,
+                    offset: l.w_off as usize,
+                    positions: if l.kind == 3 { 1 } else { grid as usize },
+                }
+            })
+            .collect()
+    }
+
+    /// Bytes of the factors of the linear layers of one sample: for each, `cout` errors then `cin` inputs.
+    pub fn factor_bytes(self) -> usize {
+        self.layers().iter().filter(|l| l.linear).map(|l| l.cout + l.cin).sum()
+    }
+}
+
+/// The gradient of one sample alone, before the clip (`neb2_sample_grad`): `g` gets the architecture's weight count,
+/// `fac`, when given, the factors of the linear layers ([`Arch::factor_bytes`]).
+pub(super) fn sample_grad(m: &V2Model, arch: Arch, x: &[u8], label: u8, g: &mut [i32], fac: Option<&mut [i8]>) {
+    assert!(x.len() >= arch.nin() && g.len() >= arch.weights() && (label as usize) < arch.nout());
+    let fac_ptr = fac.map_or(std::ptr::null_mut(), |f| {
+        assert!(f.len() >= arch.factor_bytes());
+        f.as_mut_ptr()
+    });
+    // SAFETY: `x` holds the inputs of the architecture, `g` its weight count, and `fac_ptr` is null or holds the
+    // factors of its linear layers.
+    let rc = unsafe { neb2_sample_grad(m, x.as_ptr(), label as c_int, g.as_mut_ptr(), fac_ptr) };
+    assert_eq!(rc, 0, "neb2_sample_grad failed");
 }
 
 /// Sample callback of the C code: `ctx` points to a `&dyn Dataset` on the caller's stack.

@@ -108,6 +108,25 @@ unsafe extern "C" {
     fn neb_model_hashes(m: *const NebModel, weights_hash: *mut u8, residual_hash: *mut u8);
     fn neb_model_predict(m: *const NebModel, x: *const u8) -> c_int;
     fn chacha8_stream(key: *const u8, out: *mut u8, n: usize);
+    fn neb_share_indices(key: *const u8, n: u32, idx: *mut u32);
+}
+
+/// The sample indices of the attempt `key` on a dataset of `n` samples (spec/shares.md section 5.1).
+pub fn share_indices(key: &[u8; 32], n: u32) -> [u32; NB] {
+    let mut idx = [0u32; NB];
+    // SAFETY: the C code reads 32 bytes of `key` and writes `NB` indices.
+    unsafe { neb_share_indices(key.as_ptr(), n, idx.as_mut_ptr()) };
+    idx
+}
+
+/// The gradient of one sample alone on a v2 model, before the clip, and the factors of its linear layers
+/// (`neb2_sample_grad` of `pow/ref/nebhash2.h`). The gradient of a share is the sum over its `NB` samples, clipped.
+/// A mining aid: the consensus rules do not use it. Panics on a v1 model.
+pub fn sample_grad(model: &Model, x: &[u8], label: u8, g: &mut [i32], fac: Option<&mut [i8]>) {
+    match &model.inner {
+        Inner::V1(_) => panic!("sample_grad takes a v2 model"),
+        Inner::V2(arch, m) => v2::sample_grad(m, *arch, x, label, g, fac),
+    }
 }
 
 /// Why a model step is refused. The C step is exact only while `|R + GS|` fits in an int32 without the value
@@ -680,7 +699,7 @@ mod file;
 mod v2;
 mod vectors;
 pub use file::{FileDataset, MAX_DATASETS, RECORD_BYTES, datasets_from_bytes, load_datasets};
-pub use v2::Arch;
+pub use v2::{Arch, Layer};
 pub use vectors::{SyntheticDataset, SyntheticDataset2, replay_vectors, replay_vectors2};
 
 #[cfg(test)]

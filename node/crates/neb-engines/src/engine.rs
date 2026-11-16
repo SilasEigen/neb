@@ -9,6 +9,7 @@ use neb_pow::shares::{Model, ShareBuffers, SharedDataset, share_eval};
 
 use crate::avx512::{self, FlatDataset, PreparedWeights, Scratch};
 use crate::selftest;
+use crate::table::Table;
 
 /// One attempt in this many (per worker) is evaluated by the reference even when the engine reports no hit, to
 /// catch an engine that returns wrong tickets without ever claiming a hit.
@@ -25,6 +26,8 @@ pub enum EngineKind {
     Avx512Dense,
     /// AVX-512 VNNI, skipping the zero entries (the fastest on sparse inputs such as MNIST).
     Avx512Sparse,
+    /// nebhash v2 from a table of per-sample gradients, built again for every model state ([`crate::table`]).
+    Table,
 }
 
 impl EngineKind {
@@ -33,16 +36,18 @@ impl EngineKind {
             EngineKind::Reference => "reference",
             EngineKind::Avx512Dense => "avx512-dense",
             EngineKind::Avx512Sparse => "avx512-sparse",
+            EngineKind::Table => "table",
         }
     }
 
-    /// `ref`, `reference`, `avx512` (the sparse variant), `avx512-sparse`, `avx512-dense`.
+    /// `ref`, `reference`, `avx512` (the sparse variant), `avx512-sparse`, `avx512-dense`, `table`.
     pub fn parse(s: &str) -> Result<EngineKind, String> {
         match s {
             "ref" | "reference" => Ok(EngineKind::Reference),
             "avx512" | "avx512-sparse" => Ok(EngineKind::Avx512Sparse),
             "avx512-dense" => Ok(EngineKind::Avx512Dense),
-            _ => Err(format!("unknown engine {s:?}: expected ref, avx512, avx512-sparse or avx512-dense")),
+            "table" => Ok(EngineKind::Table),
+            _ => Err(format!("unknown engine {s:?}: expected ref, avx512, avx512-sparse, avx512-dense or table")),
         }
     }
 
@@ -80,6 +85,8 @@ pub struct Engine {
     kind: EngineKind,
     dataset: SharedDataset,
     flat: Option<FlatDataset>,
+    /// The table of the last model prepared, with the hash of its weights: the jobs of one block share it.
+    table: Mutex<Option<([u8; 32], Arc<Table>)>>,
     disabled: AtomicBool,
     verified_hits: AtomicU64,
     audits: AtomicU64,
@@ -113,6 +120,7 @@ impl Engine {
             kind: EngineKind::Reference,
             dataset,
             flat: None,
+            table: Mutex::new(None),
             disabled: AtomicBool::new(false),
             verified_hits: AtomicU64::new(0),
             audits: AtomicU64::new(0),
@@ -121,7 +129,24 @@ impl Engine {
             #[cfg(feature = "fault-injection")]
             fault: AtomicU64::new(0),
         };
-        if requested != EngineKind::Reference && engine.dataset.arch() != neb_pow::shares::Arch::V1 {
+        let v1 = engine.dataset.arch() == neb_pow::shares::Arch::V1;
+        if requested == EngineKind::Table && v1 {
+            engine.note("table runs nebhash v2 only; the v1 dataset uses the reference".into());
+        } else if requested == EngineKind::Table {
+            let t0 = std::time::Instant::now();
+            match selftest::run_table(engine.dataset.arch()) {
+                Ok(report) => {
+                    engine.note(format!(
+                        "table self-test passed: {} tickets and {} gradients equal to the reference ({:.1} s)",
+                        report.tickets,
+                        report.gradients,
+                        t0.elapsed().as_secs_f64()
+                    ));
+                    engine.kind = requested;
+                }
+                Err(e) => engine.note(format!("table self-test FAILED: {e}; using the reference")),
+            }
+        } else if requested != EngineKind::Reference && !v1 {
             engine.note(format!(
                 "{} runs the v1 network only; the {} dataset uses the reference",
                 requested.name(),
@@ -202,20 +227,67 @@ impl Engine {
         }
     }
 
+    /// The key `i` of the check of a model.
+    fn check_key(wh: &[u8; 32], i: u32) -> [u8; 32] {
+        let mut input = b"neb-engine-model-check".to_vec();
+        input.extend_from_slice(wh);
+        input.extend_from_slice(&i.to_le_bytes());
+        *blake3::hash(&input).as_bytes()
+    }
+
+    /// The table of `model`: the one of the last call when the weights are the same, otherwise a new one, built in
+    /// the memory of the old one when nothing else uses it and checked against the reference.
+    fn table_for(&self, model: &Arc<Model>) -> Option<Arc<Table>> {
+        let wh = model.weights_hash();
+        let mut slot = self.table.lock().expect("table");
+        let spare = match slot.take() {
+            Some((hash, table)) if hash == wh => {
+                *slot = Some((hash, table.clone()));
+                return Some(table);
+            }
+            Some((_, table)) => Arc::try_unwrap(table).map(Table::into_spare).unwrap_or_default(),
+            None => Vec::new(),
+        };
+        let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+        let table = match Table::build(model, &*self.dataset, threads, spare) {
+            Ok(t) => Arc::new(t),
+            Err(e) => {
+                self.mismatch(format!("cannot build the table: {e}"));
+                return None;
+            }
+        };
+        let mut acc = Vec::new();
+        for i in 0..MODEL_CHECK_KEYS {
+            let key = Engine::check_key(&wh, i);
+            let want = share_eval(model, &*self.dataset, &key);
+            let got = table.eval(&key, &mut acc);
+            if (got.digest, self.corrupt(got.ticket, u64::from(i) + 1), got.indices)
+                != (want.digest, want.ticket, want.indices)
+            {
+                self.mismatch(format!("model check, key {i}"));
+                return None;
+            }
+        }
+        *slot = Some((wh, table.clone()));
+        Some(table)
+    }
+
     /// Prepares `model` for the engine and checks it against the reference on [`MODEL_CHECK_KEYS`] keys derived from
-    /// the model. Cheap (a few milliseconds); a miner calls it once per job.
+    /// the model. A miner calls it once per job. Cheap (a few milliseconds) for the AVX-512 engines; the table engine
+    /// evaluates every sample of the dataset when the weights changed since the last call.
     pub fn prepare(&self, model: &Arc<Model>) -> Arc<Prepared> {
         let mut weights = None;
+        if self.optimised() && self.kind == EngineKind::Table {
+            let table = if model.arch() == self.dataset.arch() { self.table_for(model) } else { None };
+            return Arc::new(Prepared { model: model.clone(), weights, table });
+        }
         if self.optimised() && model.arch() == neb_pow::shares::Arch::V1 {
             match PreparedWeights::new(model) {
                 Ok(w) => {
                     if let (Some(flat), Ok(mut scratch)) = (&self.flat, Scratch::new()) {
                         let wh = model.weights_hash();
                         for i in 0..MODEL_CHECK_KEYS {
-                            let mut input = b"neb-engine-model-check".to_vec();
-                            input.extend_from_slice(&wh);
-                            input.extend_from_slice(&i.to_le_bytes());
-                            let key = *blake3::hash(&input).as_bytes();
+                            let key = Engine::check_key(&wh, i);
                             let want = share_eval(model, &*self.dataset, &key);
                             let got = scratch.eval(&w, flat, &key, self.kind.sparse());
                             if (got.digest, self.corrupt(got.ticket, u64::from(i) + 1), got.indices)
@@ -231,7 +303,7 @@ impl Engine {
                 Err(e) => self.mismatch(format!("cannot prepare the model: {e}")),
             }
         }
-        Arc::new(Prepared { model: model.clone(), weights })
+        Arc::new(Prepared { model: model.clone(), weights, table: None })
     }
 
     /// A worker for one thread.
@@ -240,6 +312,7 @@ impl Engine {
             engine: self.clone(),
             buffers: ShareBuffers::new(),
             scratch: Scratch::new().ok().filter(|_| self.optimised()),
+            acc: Vec::new(),
             attempts: 0,
         }
     }
@@ -276,6 +349,7 @@ impl Engine {
 pub struct Prepared {
     model: Arc<Model>,
     weights: Option<PreparedWeights>,
+    table: Option<Arc<Table>>,
 }
 
 impl Prepared {
@@ -289,6 +363,8 @@ pub struct Worker {
     engine: Arc<Engine>,
     buffers: ShareBuffers,
     scratch: Option<Scratch>,
+    /// Gradient scratch of the table engine.
+    acc: Vec<i32>,
     attempts: u64,
 }
 
@@ -310,11 +386,19 @@ impl Worker {
             block: block_target.admits(&ticket),
         };
         let engine = &*self.engine;
-        if engine.optimised()
-            && let (Some(scratch), Some(weights), Some(flat)) =
-                (self.scratch.as_mut(), prepared.weights.as_ref(), engine.flat.as_ref())
+        let ticket = if !engine.optimised() {
+            None
+        } else if let Some(table) = prepared.table.as_ref() {
+            Some(table.eval(key, &mut self.acc).ticket)
+        } else if let (Some(scratch), Some(weights), Some(flat)) =
+            (self.scratch.as_mut(), prepared.weights.as_ref(), engine.flat.as_ref())
         {
-            let claimed = engine.corrupt(scratch.eval(weights, flat, key, engine.kind.sparse()).ticket, self.attempts);
+            Some(scratch.eval(weights, flat, key, engine.kind.sparse()).ticket)
+        } else {
+            None
+        };
+        if let Some(ticket) = ticket {
+            let claimed = engine.corrupt(ticket, self.attempts);
             let hit = share_target.admits(&claimed) || block_target.admits(&claimed);
             let audit = self.attempts.is_multiple_of(AUDIT_INTERVAL);
             if !hit && !audit {

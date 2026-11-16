@@ -6,9 +6,8 @@
 //! each (`crate::carry`), on the same lock, so the wallet file of a tester holds its coins. These outputs are
 //! coinbase outputs of height 0 and mature after 100 blocks, like any reward.
 //!
-//! The launch values ([`BEACON`], [`GENESIS_TIME`], [`GENESIS_BITS`], the list of the second test network and the
-//! relays) are provisional until the launch is announced: this build has no relay to dial and its genesis is not
-//! the genesis of the network.
+//! The launch values ([`BEACON`], [`GENESIS_TIME`], [`GENESIS_BITS`] and the list of the second test network) fix
+//! the genesis id; `docs/mainnet.md` lists them.
 
 use std::collections::BTreeMap;
 
@@ -24,18 +23,21 @@ use crate::params::{GENESIS_MINER_LOCK, POW_LIMIT_BITS, project_share_lock};
 pub const NAME: &str = "mainnet";
 pub const DEFAULT_DATADIR: &str = "neb-data";
 
-/// Provisional. At launch: the hash of a block of an external public chain mined after the launch time is
-/// announced, so that nobody could build on this genesis before the announcement.
-pub const BEACON: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+/// Beacon of spec/node.md section 6.6: the hash of Bitcoin block 976143, the lowest block of that chain whose
+/// timestamp (1794841795) is later than the time of block 12900 of the second test network (1794840900). The rule
+/// was fixed before that block existed, so nobody could build on this genesis before it.
+pub const BEACON: &str = "00000000000000000002038eee1b35e0033afa7f0d6f142bf07b941611b748a8";
 
-/// Provisional: 2026-11-14 00:00:00 UTC. At launch: the announced start, in the future of the release, so that
-/// block 1 cannot be dated earlier and the difficulty schedule does not start late.
-pub const GENESIS_TIME: u32 = 1_794_614_400;
+/// 2026-11-18 14:00:00 UTC, the start of the network: block 1 cannot be dated earlier, and a node refuses a block
+/// dated more than 120 s ahead of its clock.
+pub const GENESIS_TIME: u32 = 1_795_010_400;
 
-/// Provisional: the target of the genesis block and the ASERT anchor, set at launch from the attempt rate of the
-/// test network. The pow limit stays the easy target of the test network, 2^236: the genesis time is not in the
-/// past, so no catch-up burst can use it, and a network slower than expected still finds blocks.
-pub const GENESIS_BITS: u32 = 0xC1FE_8780;
+/// The target of the genesis block and the ASERT anchor: 32 times the target of block 12900 of the second test
+/// network (`0xc2b38c00`), about 1.2 * 10^10 attempts per block. A network with the attempt rate of that test
+/// network starts with blocks a few seconds apart and reaches the 60 s spacing after about 50 blocks; a slower one
+/// waits longer for block 1, then ASERT follows the real block times. The pow limit stays the easy target of the
+/// test network, 2^236.
+pub const GENESIS_BITS: u32 = 0xC7B3_8C00;
 
 /// The datasets of the network file, in slot order: the Kepler DR24 transit signals for the KEP1 network and the
 /// OCTMNIST scans at 64 x 64, normal or abnormal, for the RET2 network. The names are those of the test network.
@@ -47,15 +49,16 @@ pub const DATASET_HASH: [u8; 32] = [
     0xd0, 0xae, 0x26, 0x16, 0xb4, 0x9b, 0x2b, 0x49, 0xb1, 0x1a, 0xf8, 0x01, 0x0e,
 ];
 
-/// Public relays of the main network. Empty until the launch.
-pub const DEFAULT_SEEDS: [&str; 0] = [];
+/// Public relays that a node dials when it is given no `--connect`, no `--seed` and no `--no-seeds`, as `HOST:PORT`.
+/// Local policy: it is not part of the consensus rules and does not change the genesis id.
+pub const DEFAULT_SEEDS: [&str; 2] = ["seed1.neuralenginebyte.org:3440", "seed2.neuralenginebyte.org:3440"];
 
 /// Carry-over of the first test network at its last block, height 3001
 /// (`f2d0fe4dd450d5d56fd2a6959daf7c28cf71e6d52c00aa83146eb35c50b30f16`).
 const CARRY_TESTNET1: &str = include_str!("../data/carry-testnet1.txt");
 
-/// Carry-over of the second test network. Provisional: a trial at height 9600; at launch, the list at the height
-/// announced in advance, made by `examples/carry_over.rs`.
+/// Carry-over of the second test network at height 12900
+/// (`0b58879dafb768ca484d0a8894f8afc34b246c4813be5a77869c831f1f713106`), made by `examples/carry_over.rs`.
 const CARRY_TESTNET2: &str = include_str!("../data/carry-testnet2.txt");
 
 /// The carry-over of every lock: the sum of its lines in the lists of the two test networks.
@@ -162,11 +165,11 @@ mod tests {
     fn the_built_in_lists_are_the_computed_ones() {
         let hash = |text: &str| blake3::hash(text.replace("\r\n", "\n").as_bytes()).to_hex().to_string();
         assert_eq!(hash(CARRY_TESTNET1), "05b0f48dc4d698530016c147e9ba56aef24f4237183fae568233fb9d42eda32c");
-        assert_eq!(hash(CARRY_TESTNET2), "65a074a23006761f952bf0b166593c42704db3b682a98c04564501150cf43a72");
+        assert_eq!(hash(CARRY_TESTNET2), "a0fea9e6628da361568ebce88a8d942ab68b0c667bb1355350d257f9a3049916");
         let (one, two) = (parse_lines(CARRY_TESTNET1).unwrap(), parse_lines(CARRY_TESTNET2).unwrap());
         assert_eq!((one.len(), one.values().sum::<u64>()), (69, 570_190_000_000));
-        assert_eq!((two.len(), two.values().sum::<u64>()), (134, 1_823_999_999_963));
-        assert_eq!(carry_list().len(), 190);
+        assert_eq!((two.len(), two.values().sum::<u64>()), (159, 2_450_999_999_952));
+        assert_eq!(carry_list().len(), 215);
     }
 
     #[test]
@@ -215,7 +218,11 @@ mod tests {
         assert_ne!(main.chain_id(), params::genesis_id());
         assert_ne!(main.magic, params::magic());
         assert_ne!(Network::Mainnet.default_datadir(), test.default_datadir());
-        assert!(Network::Mainnet.default_seeds().is_empty(), "no relay before the launch");
+        assert_eq!(Network::Mainnet.default_seeds(), &DEFAULT_SEEDS[..]);
+        // the values of docs/mainnet.md
+        assert_eq!(hex(&main.chain_id()), "fcf3b2bdbb0a3f7621c14db4e229459375a1614d0480b4aa87a9aa01d3d58f88");
+        assert_eq!(hex(&main.magic), "e37b638b");
+        assert_eq!((GENESIS_TIME, GENESIS_BITS), (1_795_010_400, 0xC7B3_8C00));
         assert_eq!(hex(&DATASET_HASH), "fbabd0bdde0b43aef946e7031ff6e037c8a2a5d0ae2616b49b2b49b11af8010e");
     }
 }

@@ -25,9 +25,21 @@ This guide gives the parameters of the NEB main network and what differs from th
 | coinbase maturity | 100 blocks |
 | proof-of-work limit bits | `0xd5800000` (2^236) |
 | share target | the block target times 32 |
-| genesis time, genesis target, beacon, genesis id, network magic | fixed at the launch and printed by `neb-node --genesis` |
+| genesis time | 1795010400, 2026-11-18 14:00:00 UTC: the start of the network |
+| genesis target bits | `0xc7b38c00`, 32 times the target of block 12900 of the second test network: about 1.2 * 10^10 attempts per block |
+| beacon | `00000000000000000002038eee1b35e0033afa7f0d6f142bf07b941611b748a8`, Bitcoin block 976143 |
+| genesis id | `fcf3b2bdbb0a3f7621c14db4e229459375a1614d0480b4aa87a9aa01d3d58f88` |
+| network magic | `e37b638b` |
+| genesis coinbase | 217 outputs: the reward, the project share and 215 locks of the carry-over, 30,211.89999952 coins |
+| default relays | `seed1.neuralenginebyte.org:3440`, `seed2.neuralenginebyte.org:3440` |
 
 The ports are those of the test network. A machine that runs a node of each network gives one of them other ports (`--port`, `--work-port`, `--rpc-port`).
+
+## The start
+
+Block 1 cannot be dated before the genesis time, and a node refuses a block dated more than 120 s ahead of its clock: a node started earlier connects to its peers and stays at height 0 until the first block is accepted. The first blocks are mined at the genesis target. When the attempt rate of the network is above what that target expects, they come a few seconds apart and the target halves every 10 blocks until the spacing is 60 s; when it is below, block 1 takes longer and the target then follows the real block times (ASERT, `spec/node.md` section 6.2).
+
+The beacon was not chosen: it is the lowest Bitcoin block whose timestamp (1794841795) is later than the time of block 12900 of the second test network (1794840900), a rule fixed before that block existed. The genesis id depends on it, so no block of this network could be prepared before 2026-11-16.
 
 ## What differs from the test network
 

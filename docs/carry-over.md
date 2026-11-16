@@ -25,11 +25,9 @@ lists are in `node/crates/neb-node/data/`, and the node builds the genesis block
 | network | block | locks | carried over | BLAKE3 of the list |
 |---|---|---|---|---|
 | first test network (protocol 2) | height 3001, its last block, `f2d0fe4dd450d5d56fd2a6959daf7c28cf71e6d52c00aa83146eb35c50b30f16` | 69 | 5,701.9 coins | `05b0f48dc4d698530016c147e9ba56aef24f4237183fae568233fb9d42eda32c` |
-| second test network (protocol 3) | a height announced before the launch | set at that height | set at that height | set at that height |
+| second test network (protocol 3) | height 12900, announced before it was reached, `0b58879dafb768ca484d0a8894f8afc34b246c4813be5a77869c831f1f713106` | 159 | 24,509.99999952 coins | `a0fea9e6628da361568ebce88a8d942ab68b0c667bb1355350d257f9a3049916` |
 
-The list of the second test network in the repository is a trial at height 9600 (134 locks, 18,239.99999963 coins,
-BLAKE3 `65a074a23006761f952bf0b166593c42704db3b682a98c04564501150cf43a72`). It is replaced by the list at the announced
-height before the release of the main network.
+Thirteen locks are in both lists. The genesis block pays 215 locks, 30,211.89999952 coins in total.
 
 ## Rebuilding a list
 
@@ -40,6 +38,7 @@ and so on):
 cargo run --release -p neb-node --example carry_over -- neb-datasets.bin chain-dump.txt HEIGHT > list.txt
 ```
 
+`neb-datasets.bin` is here the dataset file of the test network (four datasets, release 0.3.1), and `HEIGHT` is 12900.
 The tool replays the chain with the rules of the node, every proof of work and every share checked, and stops at
 `HEIGHT`. It prints the list on the standard output and, on the standard error, the block id at that height, the number of
 locks, the total and the BLAKE3 hash of the list. The block id can be compared with `getblockhash HEIGHT` of any node.

@@ -151,13 +151,13 @@ impl Table {
                 let bytes = &row[p.at..][..part_bytes(p.kind, &p.layer)];
                 match p.kind {
                     Kind::Wide => {
-                        for (o, b) in out.iter_mut().zip(bytes.chunks_exact(4)) {
-                            *o += i32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+                        for (o, b) in out.iter_mut().zip(bytes.as_chunks::<4>().0) {
+                            *o += i32::from_le_bytes(*b);
                         }
                     }
                     Kind::Narrow => {
-                        for (o, b) in out.iter_mut().zip(bytes.chunks_exact(2)) {
-                            *o += i32::from(i16::from_le_bytes([b[0], b[1]]));
+                        for (o, b) in out.iter_mut().zip(bytes.as_chunks::<2>().0) {
+                            *o += i32::from(i16::from_le_bytes(*b));
                         }
                     }
                     Kind::Linear => {
@@ -221,14 +221,14 @@ fn fill(
             let bytes = &mut out[p.at..][..part_bytes(p.kind, &p.layer)];
             match p.kind {
                 Kind::Wide => {
-                    for (b, v) in bytes.chunks_exact_mut(4).zip(values) {
-                        b.copy_from_slice(&v.to_le_bytes());
+                    for (b, v) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
+                        *b = v.to_le_bytes();
                     }
                 }
                 Kind::Narrow => {
-                    for (b, &v) in bytes.chunks_exact_mut(2).zip(values) {
+                    for (b, &v) in bytes.as_chunks_mut::<2>().0.iter_mut().zip(values) {
                         let v = i16::try_from(v).map_err(|_| "a gradient entry does not fit 16 bits".to_string())?;
-                        b.copy_from_slice(&v.to_le_bytes());
+                        *b = v.to_le_bytes();
                     }
                 }
                 Kind::Linear => {

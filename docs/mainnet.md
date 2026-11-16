@@ -37,7 +37,7 @@ The ports are those of the test network. A machine that runs a node of each netw
 
 ## The start
 
-Block 1 cannot be dated before the genesis time, and a node refuses a block dated more than 120 s ahead of its clock: a node started earlier connects to its peers and stays at height 0 until the first block is accepted. The first blocks are mined at the genesis target. When the attempt rate of the network is above what that target expects, they come a few seconds apart and the target halves every 10 blocks until the spacing is 60 s; when it is below, block 1 takes longer and the target then follows the real block times (ASERT, `spec/node.md` section 6.2).
+Block 1 cannot be dated before the genesis time, and a node refuses a block dated more than 120 s ahead of its clock: a node started earlier connects to its peers, says how long is left and stays at height 0. A miner can connect to it at any time: it receives its first job about two minutes before the genesis time. The first blocks are mined at the genesis target. When the attempt rate of the network is above what that target expects, they come a few seconds apart and the target halves every 10 blocks until the spacing is 60 s; when it is below, block 1 takes longer and the target then follows the real block times (ASERT, `spec/node.md` section 6.2).
 
 The beacon was not chosen: it is the lowest Bitcoin block whose timestamp (1794841795) is later than the time of block 12900 of the second test network (1794840900), a rule fixed before that block existed. The genesis id depends on it, so no block of this network could be prepared before 2026-11-16.
 

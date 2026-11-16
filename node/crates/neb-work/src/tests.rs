@@ -9,7 +9,7 @@ use crate::frames::{
     parse_frame,
 };
 use crate::mempool::{Mempool, MempoolError};
-use crate::template::{MAX_STORED_SHARES, Work, branch_for_coinbase, coinbase_outputs, merkle_root_of};
+use crate::template::{MAX_STORED_SHARES, Work, branch_for_coinbase, coinbase_outputs, job_wait, merkle_root_of};
 use ed25519_dalek::{Signer, SigningKey};
 use neb_chain::ShareRecord;
 use neb_chain::demo;
@@ -225,6 +225,22 @@ fn branch_matches_the_full_root_for_every_size() {
         }
         assert_eq!(hh, full_root, "size {n}");
     }
+}
+
+// A genesis block dated ahead of the clock: no job while a block on it would be refused for its time, then a job
+// whose first block passes the time rule.
+#[test]
+fn no_job_before_the_start_of_the_chain() {
+    let state = chain_with(&key(9));
+    let (mut work, pool, lock) = (Work::new(), Mempool::new(), lock_of(&key(2)));
+    assert_eq!(state.tip_time(), T0);
+    assert_eq!(job_wait(&state, T0 - 3_600), Some(3_480));
+    assert_eq!(job_wait(&state, T0 - 121), Some(1));
+    assert!(work.make_job(&state, &pool, lock, T0 - 121).unwrap_err().contains("starts in 1 s"));
+    assert_eq!(job_wait(&state, T0 - 120), None);
+    let id = work.make_job(&state, &pool, lock, T0 - 120).expect("job");
+    assert_eq!(work.job(id).unwrap().job.time_start, T0 + 1, "accepted from one second later");
+    assert_eq!(job_wait(&state, T0 + 10), None);
 }
 
 // End to end: job, miner-side root, submit, connect, mempool cleanup.

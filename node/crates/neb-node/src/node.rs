@@ -325,6 +325,11 @@ impl Node {
         self.inner.lock().expect("node lock").state.height()
     }
 
+    /// Seconds before the node gives its first job, on a chain whose genesis time is ahead (`neb_work::job_wait`).
+    pub fn job_wait(&self, now: u32) -> Option<u32> {
+        neb_work::job_wait(&self.inner.lock().expect("node lock").state, now)
+    }
+
     pub fn tip_id(&self) -> [u8; 32] {
         self.inner.lock().expect("node lock").state.tip_id()
     }

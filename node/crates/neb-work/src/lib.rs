@@ -14,4 +14,4 @@ pub use frames::{
     Submit, decode_model, frame, model_frame, parse_frame,
 };
 pub use mempool::{Mempool, MempoolError};
-pub use template::Work;
+pub use template::{Work, job_wait};

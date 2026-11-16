@@ -48,6 +48,14 @@ pub const DEFAULT_EXTRANONCE: u8 = 16;
 const KEPT_JOBS: usize = 64;
 
 /// Merkle leaf of a serialised transaction: `H("leaf", BLAKE3(bytes))`.
+/// Seconds before a job can be given on a chain that has only its genesis block, `None` when one can. A block is
+/// later than its parent and is refused when dated more than 120 s ahead of the clock (spec/node.md section 6.1):
+/// while the genesis block is dated further ahead than that, every block 1 would be refused.
+pub fn job_wait(state: &ChainState, now: u32) -> Option<u32> {
+    let wait = state.tip_time().saturating_sub(now.saturating_add(120));
+    (state.height() == 0 && wait > 0).then_some(wait)
+}
+
 fn leaf_of(bytes: &[u8]) -> [u8; 32] {
     h(b"leaf", &[blake3::hash(bytes).as_bytes()])
 }
@@ -229,6 +237,9 @@ impl Work {
         miner_lock: [u8; 32],
         now: u32,
     ) -> Result<u64, String> {
+        if let Some(wait) = job_wait(state, now) {
+            return Err(format!("the chain starts in {wait} s: no job before then"));
+        }
         let height = state.height() + 1;
         let reward = subsidy(height);
         let share = project_share(reward);

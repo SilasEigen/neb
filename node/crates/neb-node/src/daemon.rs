@@ -305,6 +305,9 @@ pub fn run(args: &[String]) -> i32 {
     if !options.no_seeds && options.connects.is_empty() {
         crate::addrbook::spawn_book_connector(node.clone());
     }
+    if let Some(wait) = node.job_wait(now()) {
+        log.note(&starts_in(wait));
+    }
     let tip = node.clone();
     log.spawn_status(move || tip.height());
 
@@ -394,6 +397,13 @@ fn wait_registered(node: &Node, addr: &std::net::SocketAddr, timeout: Duration) 
     }
 }
 
+/// The line shown while the genesis time of the network is ahead: `wait` is `Node::job_wait`, which ends 120 s
+/// before that time.
+fn starts_in(wait: u32) -> String {
+    let left = wait.saturating_add(120);
+    format!("the network starts in {} h {:02} min: no block can be mined before then", left / 3600, left % 3600 / 60)
+}
+
 /// Sends the model frames and a fresh job to one session in one write, so the
 /// miner never holds a job without the model it refers to.
 fn send_job(node: &Node, writer: &MinerWriter, miner_lock: [u8; 32]) -> std::io::Result<()> {
@@ -425,7 +435,10 @@ fn serve_miner(mut stream: TcpStream, node: Node, log: Arc<Log>, live: Arc<Live>
         }
     };
     let session = node.register_miner(writer.clone());
-    if let Err(e) = send_job(&node, &writer, lock) {
+    // Before the start of the network the session stays open without a job: the first one is pushed to it.
+    if let Some(wait) = node.job_wait(now()) {
+        log.note(&format!("the miner {peer} waits: {}", starts_in(wait)));
+    } else if let Err(e) = send_job(&node, &writer, lock) {
         log.frame_error(&format!("send: {e}"));
         node.unregister_miner(session);
         live.miner_left();

@@ -381,7 +381,10 @@ The network has a block every 60 s on average (ASERT with a half-life of 600 s),
 reward, 5% goes to the project in a second coinbase output that the rules make mandatory (`spec/node.md` section 6.3);
 the miner gets the rest and the fees.
 
-The main network starts with the two convolutional networks at block 0, each from an untrained model. Its genesis
+The main network starts with two convolutional networks of the transit-signal architecture at block 0, each from an
+untrained model: one on the Kepler signals, one on signals found in the light curves of the TESS mission, labelled
+eclipse or junk (Tey et al. 2023). In simulation the second reaches about 95% after 3,000 blocks on 1,860 test
+signals, of which 86.6% are junk, and finds 9 eclipses in 10; it has not been measured on a network. Its genesis
 block pays each lock a tenth of the balance it held on each of the two test networks, as coinbase outputs that
 mature after 100 blocks; the lists are rebuilt from the published chains (`docs/carry-over.md`). Nodes find each
 other through public relays and then through the addresses their peers reached (`spec/node.md` section 8.4).
@@ -427,6 +430,7 @@ Assumption A.
 - Y. LeCun, C. Cortes, C. J. C. Burges. The MNIST database of handwritten digits.
 - NASA Exoplanet Archive. Kepler Q1-Q17 DR24 threshold-crossing events table.
 - C. J. Shallue, A. Vanderburg. Identifying exoplanets with deep learning: a five-planet resonant chain around Kepler-80 and an eighth planet around Kepler-90. The Astronomical Journal 155(2), 2018 (the global and local views of a folded light curve).
+- E. Tey, D. Moldovan, M. Kunimoto et al. Identifying exoplanets with deep learning. V. Improved light-curve classification for TESS full-frame image observations. The Astronomical Journal 165(3), 95, 2023 (Astronet-Triage-v2).
 - J. Yang, R. Shi, D. Wei, Z. Liu et al. MedMNIST v2: a large-scale lightweight benchmark for 2D and 3D biomedical image classification. Scientific Data 10, 41, 2023.
 - D. S. Kermany, M. Goldbaum, W. Cai et al. Identifying medical diagnoses and treatable diseases by image-based deep learning. Cell 172(5), 2018 (the OCT scans).
 - H. Xiao, K. Rasul, R. Vollgraf. Fashion-MNIST: a novel image dataset for benchmarking machine learning algorithms. arXiv:1708.07747, 2017.

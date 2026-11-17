@@ -69,7 +69,7 @@ project share stays in the coinbase as for a solo miner.
 - `mining.set_model`: the weights of a model, as in the Model frame of `spec/node.md` section 7.1: `slot` (number,
   the index of the dataset of the jobs in the network file, which also names the network to run), `weights_hash`
   (32 bytes) and `weights` (the packed weights: 50 816 bytes for the 784-128-10 network, 13 000 for KEP1 and 11 140
-  for RET2 of `spec/nebhash-v2.md`, the networks of the main network and of the testnet from block 8800). The miner checks that
+  for RET2 of `spec/nebhash-v2.md`; the main network has KEP1 in both slots, the testnet both networks from block 8800). The miner checks that
   `weights_hash` is the weights hash of `weights` (`spec/shares.md` section 7) and keeps the model under that hash.
   The pool sends it before a `mining.notify` that names a weights hash the session has not received.
 - `mining.notify`: `job` is an object with the fields `job_id` (string), `clean` (boolean), `version`, `parent`,

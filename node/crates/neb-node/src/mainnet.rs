@@ -1,7 +1,7 @@
 //! Parameters and genesis block of the main network (spec/node.md section 6.6).
 //!
-//! The rules are those of the test network; what differs is listed here. The two model slots hold the convolutional
-//! datasets from the genesis block (spec/nebhash-v2.md), with no dataset upgrade. The genesis coinbase pays, after
+//! The rules are those of the test network; what differs is listed here. The two model slots hold a KEP1 network
+//! each from the genesis block (spec/nebhash-v2.md), with no dataset upgrade. The genesis coinbase pays, after
 //! the reward of height 0, the carry-over of the two test networks: every lock receives a tenth of its balance on
 //! each (`crate::carry`), on the same lock, so the wallet file of a tester holds its coins. These outputs are
 //! coinbase outputs of height 0 and mature after 100 blocks, like any reward.
@@ -39,14 +39,15 @@ pub const GENESIS_TIME: u32 = 1_795_010_400;
 /// test network, 2^236.
 pub const GENESIS_BITS: u32 = 0xC7B3_8C00;
 
-/// The datasets of the network file, in slot order: the Kepler DR24 transit signals for the KEP1 network and the
-/// OCTMNIST scans at 64 x 64, normal or abnormal, for the RET2 network. The names are those of the test network.
-pub const DATASET_NAMES: [&str; 2] = ["kepler-v2", "retina64"];
+/// The datasets of the network file, in slot order, both for the KEP1 network: the Kepler DR24 transit signals
+/// (planet candidate or false positive) and the TESS signals of Astronet-Triage-v2 (eclipse or junk).
+/// `tools/make_mainnet_datasets.py` builds the file.
+pub const DATASET_NAMES: [&str; 2] = ["kepler-v2", "tess"];
 
-/// BLAKE3 of the dataset set file of the main network: the last two datasets of the file of the test network.
+/// BLAKE3 of the dataset set file of the main network.
 pub const DATASET_HASH: [u8; 32] = [
-    0xfb, 0xab, 0xd0, 0xbd, 0xde, 0x0b, 0x43, 0xae, 0xf9, 0x46, 0xe7, 0x03, 0x1f, 0xf6, 0xe0, 0x37, 0xc8, 0xa2, 0xa5,
-    0xd0, 0xae, 0x26, 0x16, 0xb4, 0x9b, 0x2b, 0x49, 0xb1, 0x1a, 0xf8, 0x01, 0x0e,
+    0x79, 0x0b, 0x57, 0xfb, 0xd8, 0x30, 0xf3, 0xdc, 0xbe, 0x7d, 0xe9, 0xd1, 0x14, 0x6a, 0xa8, 0x9a, 0x0a, 0x20, 0x79,
+    0x91, 0x18, 0xe3, 0x0d, 0xd4, 0x8a, 0x34, 0x3a, 0x5c, 0x98, 0xf1, 0x9e, 0x72,
 ];
 
 /// Public relays that a node dials when it is given no `--connect`, no `--seed` and no `--no-seeds`, as `HOST:PORT`.
@@ -68,7 +69,9 @@ pub fn carry_list() -> BTreeMap<Lock, u64> {
 }
 
 /// Coinbase witness of spec/node.md section 6.6, 44 bytes: `height (u32 LE, 0) || extranonce (8) || miner data (32)`,
-/// derived from the beacon with the tags of the main network.
+/// derived from the beacon with the tags of the main network. The beacon tag ends in 2: the genesis of version
+/// 1.0.0, which never had a block, used `neb-mainnet-beacon-1` with another dataset in slot 1, and a node of that
+/// version must not take this network for its own.
 fn genesis_witness() -> Vec<u8> {
     let mut witness = Vec::with_capacity(44);
     witness.extend_from_slice(&0u32.to_le_bytes());
@@ -77,7 +80,7 @@ fn genesis_witness() -> Vec<u8> {
     extranonce.update(BEACON.as_bytes());
     witness.extend_from_slice(&extranonce.finalize().as_bytes()[..8]);
     let mut miner_data = blake3::Hasher::new();
-    miner_data.update(b"neb-mainnet-beacon-1");
+    miner_data.update(b"neb-mainnet-beacon-2");
     miner_data.update(BEACON.as_bytes());
     witness.extend_from_slice(miner_data.finalize().as_bytes());
     witness
@@ -153,7 +156,7 @@ mod tests {
     use crate::params::{self, Network};
 
     fn datasets() -> Vec<SharedDataset> {
-        vec![Arc::new(SyntheticDataset2::new(Arch::Kep1)), Arc::new(SyntheticDataset2::new(Arch::Ret2))]
+        vec![Arc::new(SyntheticDataset2::new(Arch::Kep1)), Arc::new(SyntheticDataset2::new(Arch::Kep1))]
     }
 
     fn hex(bytes: &[u8]) -> String {
@@ -207,7 +210,8 @@ mod tests {
         assert_eq!(state.utxos().len(), 2 + carry_list().len());
         assert!(state.utxos().values().all(|u| u.coinbase && u.height == 0), "the carry-over matures like a reward");
         let models = state.tip_models();
-        assert_eq!((models[0].arch(), models[1].arch()), (Arch::Kep1, Arch::Ret2));
+        assert_eq!((models[0].arch(), models[1].arch()), (Arch::Kep1, Arch::Kep1));
+        assert_ne!(models[0].weights_hash(), models[1].weights_hash(), "each slot starts from its own weights");
         assert_eq!((net.chain.slots(), net.chain.check_upgrades()), (2, Ok(())));
     }
 
@@ -220,9 +224,9 @@ mod tests {
         assert_ne!(Network::Mainnet.default_datadir(), test.default_datadir());
         assert_eq!(Network::Mainnet.default_seeds(), &DEFAULT_SEEDS[..]);
         // the values of docs/mainnet.md
-        assert_eq!(hex(&main.chain_id()), "fcf3b2bdbb0a3f7621c14db4e229459375a1614d0480b4aa87a9aa01d3d58f88");
-        assert_eq!(hex(&main.magic), "e37b638b");
+        assert_eq!(hex(&main.chain_id()), "da2f5af7bb4c5e2bcc8d558b2f4f01d4c88557a943e6cff9cd035638fe9439ae");
+        assert_eq!(hex(&main.magic), "ad33cae5");
         assert_eq!((GENESIS_TIME, GENESIS_BITS), (1_795_010_400, 0xC7B3_8C00));
-        assert_eq!(hex(&DATASET_HASH), "fbabd0bdde0b43aef946e7031ff6e037c8a2a5d0ae2616b49b2b49b11af8010e");
+        assert_eq!(hex(&DATASET_HASH), "790b57fbd830f3dcbe7de9d1146aa89a0a20799118e30dd48a343a5c98f19e72");
     }
 }

@@ -7,17 +7,17 @@ This guide gives the parameters of the NEB main network and what differs from th
 | Item | Value |
 |---|---|
 | network name | mainnet |
-| software version | 1.0.0 |
+| software version | 1.0.1 |
 | protocol version | 3 |
 | address prefix | `neb` (bech32m, 32-byte lock data) |
 | peer-to-peer port | 3440 |
 | work service port | 3441, loopback only |
 | JSON-RPC port | 8432, loopback only |
 | default data directory | `./neb-data` |
-| models | two, from the genesis block: slot 0 `kepler-v2` (KEP1 network), slot 1 `retina64` (RET2 network) |
-| dataset file | `neb-datasets.bin`, 222,320,684 bytes, two datasets |
-| dataset file hash (BLAKE3) | `fbabd0bdde0b43aef946e7031ff6e037c8a2a5d0ae2616b49b2b49b11af8010e` |
-| dataset file hash (SHA-256) | `500846f682669743b1305776cfbf19edc11ad3db1c809bd5a4fe5b33cf196fa4` |
+| models | two, from the genesis block: slot 0 `kepler-v2`, slot 1 `tess`, both with the KEP1 network |
+| dataset file | `neb-datasets.bin`, 16,087,037 bytes, two datasets |
+| dataset file hash (BLAKE3) | `790b57fbd830f3dcbe7de9d1146aa89a0a20799118e30dd48a343a5c98f19e72` |
+| dataset file hash (SHA-256) | `57e22a4b8aacecb2ebae62f76307ddccb04198ed5c4ba15c1dee90ca7a7c2174` |
 | dataset upgrades | none |
 | block spacing | 60 s (ASERT, half-life 600 s) |
 | reward | 20 coins per block, halving every 450,000 blocks; 5% of each reward to the project output |
@@ -28,8 +28,8 @@ This guide gives the parameters of the NEB main network and what differs from th
 | genesis time | 1795010400, 2026-11-18 14:00:00 UTC: the start of the network |
 | genesis target bits | `0xc7b38c00`, 32 times the target of block 12900 of the second test network: about 1.2 * 10^10 attempts per block |
 | beacon | `00000000000000000002038eee1b35e0033afa7f0d6f142bf07b941611b748a8`, Bitcoin block 976143 |
-| genesis id | `fcf3b2bdbb0a3f7621c14db4e229459375a1614d0480b4aa87a9aa01d3d58f88` |
-| network magic | `e37b638b` |
+| genesis id | `da2f5af7bb4c5e2bcc8d558b2f4f01d4c88557a943e6cff9cd035638fe9439ae` |
+| network magic | `ad33cae5` |
 | genesis coinbase | 217 outputs: the reward, the project share and 215 locks of the carry-over, 30,211.89999952 coins |
 | default relays | `seed1.neuralenginebyte.org:3440`, `seed2.neuralenginebyte.org:3440` |
 
@@ -43,12 +43,14 @@ The beacon was not chosen: it is the lowest Bitcoin block whose timestamp (17948
 
 ## What differs from the test network
 
-- **The models.** Both slots hold a convolutional network from block 0: KEP1 on the Kepler transit signals (26,000 weights) and RET2 on the retinal scans at 64 x 64, normal or abnormal (22,280 weights). Each starts from the untrained model derived from the genesis id and its slot (`spec/shares.md` section 11.2). The test network started with two 784-128-10 models and moved to these networks at blocks 8800 and 8801.
-- **The dataset file.** It holds the last two datasets of the file of the test network, and `tools/make_mainnet_datasets.py` rebuilds it from that file. A node refuses a file with another hash, so the file of one network cannot be used on the other.
+- **The models.** Both slots hold a KEP1 network (26,000 weights) from block 0. Slot 0 learns the Kepler transit signals, planet candidate or false positive (13,404 signals). Slot 1 learns the TESS signals of Astronet-Triage-v2 (Tey et al. 2023, CC BY 4.0), eclipse or junk: the 2,363 eclipses of its train and validation splits and 4,726 junk signals, in the two views of the Kepler dataset. The first sorts what a search finds, the second tells the planets among what is left. Each starts from the untrained model derived from the genesis id and its slot (`spec/shares.md` section 11.2). The test network started with two 784-128-10 models and moved to these networks at blocks 8800 and 8801.
+- **The dataset file.** It holds the Kepler dataset of the file of the test network, copied unchanged, and the TESS dataset; `tools/make_mainnet_datasets.py` rebuilds it from that file and from the public record of the TESS signals, and writes the 1,860 test signals kept out of the chain. A node refuses a file with another hash, so the file of one network cannot be used on the other.
 - **The genesis block.** After the reward of height 0 and the project share, its coinbase pays the carry-over of the two test networks: one output per lock (next section).
-- **The tags.** `neb-mainnet-beacon-1`, `neb-mainnet-extranonce` and `neb-mainnet-magic` (`spec/node.md` sections 6.6 and 8.2), so the two networks have different genesis ids and magics and their nodes do not talk to each other.
+- **The tags.** `neb-mainnet-beacon-2`, `neb-mainnet-extranonce` and `neb-mainnet-magic` (`spec/node.md` sections 6.6 and 8.2), so the two networks have different genesis ids and magics and their nodes do not talk to each other.
 
-One attempt takes about 2 ms of one CPU core on KEP1 and about 7 ms on RET2. A block alternates between the two slots, so the attempt rate of a miner changes from one block to the next.
+One attempt takes about 2 ms of one CPU core. A block alternates between the two slots, which run the same network, so the attempt rate of a miner is the same on every block.
+
+Version 1.0.0 named the retinal scans of the test network for slot 1 and had another genesis id (`fcf3b2bd...`) and magic; no block was mined on it. Its nodes and its dataset file do not work with this network, and a node refuses a data directory made by 1.0.0: that directory holds no block and is deleted; the wallet file is not in it.
 
 ## Carry-over of the test networks
 

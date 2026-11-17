@@ -20,7 +20,7 @@ This guide gives the parameters of the NEB main network and what differs from th
 | dataset file hash (SHA-256) | `500846f682669743b1305776cfbf19edc11ad3db1c809bd5a4fe5b33cf196fa4` |
 | dataset upgrades | none |
 | block spacing | 60 s (ASERT, half-life 600 s) |
-| reward | 20 coins per block, halving every 450,000 blocks; 5 % of each reward to the project output |
+| reward | 20 coins per block, halving every 450,000 blocks; 5% of each reward to the project output |
 | supply | the rewards sum to 17,999,999.9415 coins; the genesis block adds the carry-over of the test networks |
 | coinbase maturity | 100 blocks |
 | proof-of-work limit bits | `0xd5800000` (2^236) |

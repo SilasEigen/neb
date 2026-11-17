@@ -43,11 +43,11 @@ NEB's innovation lies in the protocol-level integration of deterministic neural 
 | One attempt | 16 samples, one training step, about 3.3 million integer multiply-accumulates |
 | Shares | about 32 per block, applied one block later |
 | Block time | 60 s target, ASERT (aserti3-2d) with a 600 s half-life |
-| Supply | 20 NEB per block, halving every 450,000 blocks; 5 % project share in the coinbase. The genesis block also pays the carry-over of the test networks, a tenth of each balance ([docs/carry-over.md](docs/carry-over.md)) |
+| Supply | 20 NEB per block, halving every 450,000 blocks; 5% project share in the coinbase. The genesis block also pays the carry-over of the test networks, a tenth of each balance ([docs/carry-over.md](docs/carry-over.md)) |
 | Money layer | UTXO, Ed25519 signatures, BLAKE3, no virtual machine |
 | Verification | about 0.5 ms of one CPU core per attempt, 17 ms for a typical block |
 
-In simulation of the protocol, the Kepler model reaches 88.8 % on stars it never trained on (a float network of the same shape trained with Adam: 89.0 %), and the retina model 55 % on four balanced classes after 12,000 blocks. The models of the main network are small convolutional networks ([spec/nebhash-v2.md](spec/nebhash-v2.md)): in simulation, 90.8 % for Kepler and 81 to 83 % for the retina on a normal or abnormal task (500 balanced test scans). Earlier measurements on MNIST: 96.0 % test accuracy in simulation, and on the node software 10 pools train the model as well as one (89.9 % after 300 blocks).
+In simulation of the protocol, the Kepler model reaches 88.8% on stars it never trained on (a float network of the same shape trained with Adam: 89.0%), and the retina model 55% on four balanced classes after 12,000 blocks. The models of the main network are small convolutional networks ([spec/nebhash-v2.md](spec/nebhash-v2.md)): in simulation, 90.8% for Kepler and 81 to 83% for the retina on a normal or abnormal task (500 balanced test scans). Earlier measurements on MNIST: 96.0% test accuracy in simulation, and on the node software 10 pools train the model as well as one (89.9% after 300 blocks).
 
 ## Status
 

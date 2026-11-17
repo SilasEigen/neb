@@ -64,7 +64,7 @@ The input is a 64 x 64 image of one channel, row by row.
 | 4 | 512, channel-major | linear | 32 | 5 | 5 | 16 |
 | 5 | 32 | linear, output layer | 2 | 4 | 3 | 13 |
 
-The shifts were chosen on the initial states so that about 2 % of the values of each layer saturate, as in v1.
+The shifts were chosen on the initial states so that about 2% of the values of each layer saturate, as in v1.
 
 ## 4. A share
 
@@ -138,8 +138,8 @@ A simulation of the step rule on the testnet datasets, with 32 shares of 16 samp
 
 | model | v1 network, chain rule | v2 architecture, chain rule | v2 architecture, ordinary float training |
 |---|---|---|---|
-| Kepler (test set, 2 333 signals) | 88.3 % at 2 000 steps | 90.8 % at 3 000 steps | 91.6 % |
-| retina, normal or abnormal (balanced test, 500 scans) | about 78 % | 81 to 83 % from 5 000 to 8 000 steps | 92.0 % |
+| Kepler (test set, 2 333 signals) | 88.3% at 2 000 steps | 90.8% at 3 000 steps | 91.6% |
+| retina, normal or abnormal (balanced test, 500 scans) | about 78% | 81 to 83% from 5 000 to 8 000 steps | 92.0% |
 
 These figures come from one run each and move by about 1 point (Kepler) and 2 points (retina) between runs. A clip
 mask on the output layer adds about 2 points on the retina and nothing on Kepler, but it can stop the training for good

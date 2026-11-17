@@ -32,7 +32,7 @@ The weights of slot 0 (Kepler, 784-128-10, signed 4-bit) were read with the `get
 
 - file: `results/neb-kepler-block1428.npz`
 - weights hash: `d8d471ac7f9ee7a0b28f6f8aa1d5e6e647331a2b10f3929807155f1a14b4334a`
-- accuracy on the chain's Kepler test split (`kepler-test-q8.bin`, 2,333 signals never used in training): 88.34 %
+- accuracy on the chain's Kepler test split (`kepler-test-q8.bin`, 2,333 signals never used in training): 88.34%
 
 The forward pass is the integer one of `spec/shares.md`. The input is the 784 values of `tools/make_datasets.py`
 (583 bins of the whole orbit and 201 bins around the transit, 8 levels). The score of a signal is the planet output
@@ -50,7 +50,7 @@ with the oracle of `pow/oracle`.
    multiple event statistic (MES) is kept.
 3. **Vetting** (`vet.py`), in the order of the Kepler pipeline: MES at least 7.1, at least 3 transits, no single
    event dominating, most events are dips, odd and even depths within 3 sigma, no secondary eclipse above 3 sigma,
-   duration at most 1.5 times the longest central transit for a star of density 2 (solar units), depth at most 20 %.
+   duration at most 1.5 times the longest central transit for a star of density 2 (solar units), depth at most 20%.
    The noise is measured on the light curve averaged over the transit duration, so red noise counts. Two more tests:
    - **Depth by Kepler season.** Kepler rolled every quarter, so quarters 4 apart share a pointing. A planet blocks
      the same fraction of its star in every season; another star blended in the photometry does not. A signal fails
@@ -75,8 +75,8 @@ on the NASA DV light curve and on the Kepler Bonus light curve of the same signa
 
 | light curve | accuracy | AUC | planets found | false positives rejected |
 |---|---|---|---|---|
-| NASA DV (training kind) | 76.7 % | 0.877 | 35 / 59 | 54 / 57 |
-| Kepler Bonus PSF | 82.8 % | 0.923 | 42 / 59 | 54 / 57 |
+| NASA DV (training kind) | 76.7% | 0.877 | 35 / 59 | 54 / 57 |
+| Kepler Bonus PSF | 82.8% | 0.923 | 42 / 59 | 54 / 57 |
 
 The model works on Kepler Bonus light curves at least as well as on the kind it was trained on. It sorts signals that
 are already detected; it does not separate noise from transits on its own, hence the search and vetting before it.
@@ -119,7 +119,7 @@ Noise does not give the same depth in every season, so the season test removes m
 
 - `kic-009966110`, P = 8.9474 d: a known false positive, KOI K06075.01, 15 arcsec away, same period. Rejected; the
   season test now rejects it too (ratio 3.4, 31 sigma), as expected from a blend.
-- `kic-009151544`, P = 1.8835 d, depth 2.2 %: seen in one quarter of target pixel data, on the star, but about
+- `kic-009151544`, P = 1.8835 d, depth 2.2%: seen in one quarter of target pixel data, on the star, but about
   9 Earth radii if the dip is on it; a stellar or brown-dwarf companion is more likely. Low priority.
 - `kic-006691030`, P = 4.7720 d: the candidate below.
 
@@ -149,8 +149,8 @@ Warning flags (`candidate.py`):
 
 1. **Stellar density.** The transit shape gives a density of 0.9 solar, against 4.4 from the TIC. Forcing the TIC
    density costs delta chi2 = 7.7. A grazing transit, an eccentric orbit, or a blend can each explain it.
-2. **Phase curve.** Out of transit there is a 74 ppm signal at P/2, above 99 % of random trial periods (and 76 ppm at
-   P, above 97 %). Ellipsoidal light at P/2 is the sign of an eclipsing binary.
+2. **Phase curve.** Out of transit there is a 74 ppm signal at P/2, above 99% of random trial periods (and 76 ppm at
+   P, above 97%). Ellipsoidal light at P/2 is the sign of an eclipsing binary.
 
 An eclipsing binary, grazing or blended within 2 arcsec, is not excluded. The vetting sheet is
 `results/candidate-kic-006691030.png`.

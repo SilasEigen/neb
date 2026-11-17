@@ -9,10 +9,10 @@ ticket of the attempt: below the block target it makes a block, below a target 3
 gradients of the shares of a round are summed into one bounded update of the model, applied one block later. Every node
 rebuilds the model by replaying the shares listed in the blocks, so the model is a function of the chain, and a block is
 verified by re-execution, with no proof system. On a network of one hidden layer an attempt costs about 0.5 ms of one CPU
-core; in simulation that network reaches 96.0 % test accuracy on MNIST, and 95.7 % with the one-block delay of the
-protocol, and on the node software 10 pools reach 89.9 % after 300 blocks, the accuracy of a single pool. The public test
+core; in simulation that network reaches 96.0% test accuracy on MNIST, and 95.7% with the one-block delay of the
+protocol, and on the node software 10 pools reach 89.9% after 300 blocks, the accuracy of a single pool. The public test
 network trains two models on scientific data, transit signals of the Kepler mission and retinal scans, which the chain
-moved to convolutional networks at a block height; trained by independent miners, they reached 87.0 % and 67.8 % about
+moved to convolutional networks at a block height; trained by independent miners, they reached 87.0% and 67.8% about
 830 blocks later.
 
 ## 1. Introduction
@@ -270,7 +270,7 @@ an adversary is measured (`docs/experiments.md`, sections 2 and 5):
 - **Targeted poisoning.** An attacker steering half of the shares toward one class with 4,096 nonces each lowers the
   accuracy by 1.7 points after 300 steps; in the chain each candidate would cost a valid share.
 - **Deviating pools on the node software.** One pool among 10 that withholds its shares, or reports only the quarter that
-  push the model most toward one class, leaves the predicted share of that class at 9.8 to 10.2 % (class 3 is 10.2 % of the
+  push the model most toward one class, leaves the predicted share of that class at 9.8 to 10.2% (class 3 is 10.2% of the
   samples) and the accuracy within the spread of honest runs. The largest effect is a censoring producer with a third of
   the attempts: blocks list 13 shares on average instead of 30, and the accuracy trails by about 3 points after 200 blocks
   and 1.8 points after 300. The training slows down and shows no bias.
@@ -287,8 +287,8 @@ Section 7.5 reports the public network with independent miners.
 ### 7.1 Training
 
 The simulation trains the 784-128-10 network on MNIST with the model step of section 4 and evaluates it on the 10,000 test
-images. After 9,600, 32,000 and 96,000 share nonces it reaches 90.2 %, 93.2 % and 96.0 % test accuracy. Clipping the
-gradients at `CLIP = 256` costs nothing measurable (90.2 % after 300 steps with and without clipping).
+images. After 9,600, 32,000 and 96,000 share nonces it reaches 90.2%, 93.2% and 96.0% test accuracy. Clipping the
+gradients at `CLIP = 256` costs nothing measurable (90.2% after 300 steps with and without clipping).
 
 ### 7.2 The one-block delay
 
@@ -299,8 +299,8 @@ mean [min-max] over 4 seeds, with `SU1 = 15` and `SU2 = 12`:
 |---|---|---|---|---|
 | Accuracy | 95.9 [95.8-96.0] | 95.7 [95.7-95.8] | 95.4 [95.2-95.7] | 93.7 [91.7-94.4] |
 
-The chain's case is one block: 95.7 %, 0.2 point below no delay. Faster shifts (`SU1 = 13`, `SU2 = 10`) reach 97.3 %
-without delay but fall to 61.2 % with one block of delay, which is why the protocol uses the slower step.
+The chain's case is one block: 95.7%, 0.2 point below no delay. Faster shifts (`SU1 = 13`, `SU2 = 10`) reach 97.3%
+without delay but fall to 61.2% with one block of delay, which is why the protocol uses the slower step.
 
 ### 7.3 Several pools
 
@@ -315,12 +315,12 @@ every 2 s and the testnet's ratio of 32 between share and block targets. The nod
 
 | pools | share bound to the winning header | share bound to the parent (this protocol) |
 |---|---|---|
-| 1 | - | 89.7 % |
-| 10 | 36.2 % | 89.9 % |
-| 20 | 24.4 % | 89.4 % |
+| 1 | - | 89.7% |
+| 10 | 36.2% | 89.9% |
+| 20 | 24.4% | 89.4% |
 
 With 50 or 100 ms of delay on every link, blocks still list 30 to 35 shares. On Fashion-MNIST, with constants chosen for
-MNIST, 10 pools and one pool reach 82.0 % and 80.7 % after 1,000 blocks.
+MNIST, 10 pools and one pool reach 82.0% and 80.7% after 1,000 blocks.
 
 ### 7.4 Convolutional networks
 
@@ -330,8 +330,8 @@ with ordinary floating-point training (`spec/nebhash-v2.md` section 7):
 
 | model | one hidden layer, chain rule | convolutional, chain rule | convolutional, float training |
 |---|---|---|---|
-| transit signals (2,333 test signals) | 88.3 % at 2,000 steps | 90.8 % at 3,000 steps | 91.6 % |
-| retinal scans, normal or abnormal (500 test scans, balanced) | about 78 % | 81 to 83 % from 5,000 to 8,000 steps | 92.0 % |
+| transit signals (2,333 test signals) | 88.3% at 2,000 steps | 90.8% at 3,000 steps | 91.6% |
+| retinal scans, normal or abnormal (500 test scans, balanced) | about 78% | 81 to 83% from 5,000 to 8,000 steps | 92.0% |
 
 Each figure comes from one run, and runs differ by about 1 point on the transit signals and 2 points on the retinal scans.
 On the transit signals the integer rule with 4-bit weights is within 1 point of float training; on the retinal scans it
@@ -347,14 +347,14 @@ on samples kept out of the dataset file.
 |---|---|
 | block spacing | 58.9 s on average, for a target of 60 s |
 | addresses that mined at least one block | 76 (a pool counts as one) |
-| shares listed per block | 20.6 on average, median 12, for 32 expected; 4.7 % of the blocks list none |
+| shares listed per block | 20.6 on average, median 12, for 32 expected; 4.7% of the blocks list none |
 
 | model | at its first block | measured later |
 |---|---|---|
-| transit signals, one hidden layer (blocks 0 to 8,799) | 14.1 % | 89.0 % at block 8,798 |
-| retinal scans with 4 labels, one hidden layer (blocks 0 to 8,800) | 9.2 % | 53.6 % at block 8,799, 56.0 % at best |
-| transit signals, convolutional (from block 8,800) | 42.8 % | 87.0 % at block 9,632 |
-| retinal scans, normal or abnormal, convolutional (from block 8,801) | 47.8 % | 67.8 % at block 9,632, 70.0 % at best |
+| transit signals, one hidden layer (blocks 0 to 8,799) | 14.1% | 89.0% at block 8,798 |
+| retinal scans with 4 labels, one hidden layer (blocks 0 to 8,800) | 9.2% | 53.6% at block 8,799, 56.0% at best |
+| transit signals, convolutional (from block 8,800) | 42.8% | 87.0% at block 9,632 |
+| retinal scans, normal or abnormal, convolutional (from block 8,801) | 47.8% | 67.8% at block 9,632, 70.0% at best |
 
 The models learn from the shares of miners that do not coordinate, and every node that replays the chain obtains the same
 weights. Blocks list fewer shares than the 32 expected, so a step of the chain carries less than a step of the
@@ -378,7 +378,7 @@ evaluations, and recorded chains give the same final model hashes in the node an
 
 The network has a block every 60 s on average (ASERT with a half-life of 600 s), 20 coins per block with a halving every
 450,000 blocks, and a UTXO money layer with Ed25519 signatures and BLAKE3 hashing, with no virtual machine. Of each
-reward, 5 % goes to the project in a second coinbase output that the rules make mandatory (`spec/node.md` section 6.3);
+reward, 5% goes to the project in a second coinbase output that the rules make mandatory (`spec/node.md` section 6.3);
 the miner gets the rest and the fees.
 
 The main network starts with the two convolutional networks at block 0, each from an untrained model. Its genesis
@@ -412,7 +412,7 @@ Parameters and operation are in `docs/mainnet.md`, and those of the test network
 NEB makes the training of a small neural network the work of a proof-of-work chain. Each attempt is one deterministic
 integer training step, the digest of its gradient is the ticket, and the shares listed in the blocks drive a bounded update
 that every node replays, so the model is a function of the chain. Theorem 1 bounds what one contribution can do to one step.
-In simulation the network reaches 96.0 % on MNIST and 95.7 % with the delay of the protocol; on the node software, 10 pools
+In simulation the network reaches 96.0% on MNIST and 95.7% with the delay of the protocol; on the node software, 10 pools
 train the model as well as one. On the public test network, independent miners trained two models on scientific data, and
 the chain moved both to convolutional networks at a block height without a new genesis. What remains outside this
 document is a bound over many steps, incentives to list and relay shares, and an external review of the protocol and of

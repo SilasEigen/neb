@@ -23,7 +23,7 @@ The node is an independent implementation, not a fork of another node. BLAKE3 an
 | future time limit | 120 s | 6.1 |
 | initial reward | 20 coins | 6.3 |
 | halving interval | 450 000 blocks | 6.3 |
-| project share | 5 % of the reward | 6.3 |
+| project share | 5% of the reward | 6.3 |
 | coinbase maturity | 100 blocks | 5.3 |
 | maximum reorganisation | 60 blocks | 6.5 |
 | block size | at most 1 000 000 bytes | 5.4 |

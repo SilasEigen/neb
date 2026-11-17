@@ -37,17 +37,17 @@ delay in this section. Commands are run from the root of the repository; runtime
 
 | Command | Steps | Share nonces | Test accuracy | Runtime |
 |---|---|---|---|---|
-| `python tools/training_shares.py --steps 300` | 300 | 9,600 | 90.2 % | 22 s |
-| `python tools/training_shares.py --steps 1000 --no-replay-check` | 1,000 | 32,000 | 93.2 % | 45 s |
-| `python tools/training_shares.py --no-replay-check` | 3,000 | 96,000 | 96.0 % | 108 s |
+| `python tools/training_shares.py --steps 300` | 300 | 9,600 | 90.2% | 22 s |
+| `python tools/training_shares.py --steps 1000 --no-replay-check` | 1,000 | 32,000 | 93.2% | 45 s |
+| `python tools/training_shares.py --no-replay-check` | 3,000 | 96,000 | 96.0% | 108 s |
 
 One run each; the runtimes are upper bounds. The residual keeps the small gradients that plain rounding loses. The update
-shifts are two bits larger than a faster choice (`SU1 = 13`, `SU2 = 10`) that reaches 97.3 % after 96,000 shares without
+shifts are two bits larger than a faster choice (`SU1 = 13`, `SU2 = 10`) that reaches 97.3% after 96,000 shares without
 delay; the price of the slower step is 1.4 points at 96,000 shares, and in exchange the model tolerates the delay of
 section 3.
 
-**Clipping.** After 300 steps, `python tools/training_shares.py --steps 300 --clip C --no-replay-check` gives 90.2 % without
-clipping (`--clip 0`), 90.2 % with `C = 512`, 90.2 % with `C = 256` and 90.1 % with `C = 128` (9 to 22 s each).
+**Clipping.** After 300 steps, `python tools/training_shares.py --steps 300 --clip C --no-replay-check` gives 90.2% without
+clipping (`--clip 0`), 90.2% with `C = 512`, 90.2% with `C = 256` and 90.1% with `C = 128` (9 to 22 s each).
 
 **Grinding attack.** The attacker controls 8 of the 32 shares of every step. For each of them it tries `M` nonces and keeps
 the one whose gradient points the most against the honest direction (estimated on 1,024 images).
@@ -55,7 +55,7 @@ the one whose gradient points the most against the honest direction (estimated o
 
 | Clip | Honest (22 s) | M = 32 (116 s) | M = 128 (406 s) |
 |---|---|---|---|
-| 256 | 90.2 % | 90.1 % | 90.1 % |
+| 256 | 90.2% | 90.1% | 90.1% |
 
 The damage is at most 0.1 point, within the run-to-run noise. The attacker can only choose among real images of the dataset,
 so it cannot build a degenerate input. This is one heuristic attacker and one seed per cell.
@@ -67,17 +67,17 @@ happens when gradients that are 1, 4 or 16 steps old are accepted:
 
 | Case | Accuracy |
 |---|---|
-| 32 shares per step (reference) | 90.2 % |
-| stale shares rejected, 16 shares left per step | 88.0 % |
-| stale shares rejected, 8 left | 85.2 % |
-| stale shares rejected, 4 left | 81.6 % |
-| stale shares rejected, 1 left | 60.9 % |
-| stale gradients accepted, half of the shares 1 step old | 90.1 % |
-| stale gradients accepted, all shares 1 step old | 90.0 % |
-| stale gradients accepted, half of the shares 4 steps old | 89.1 % |
-| stale gradients accepted, all shares 4 steps old | 42.1 % |
-| stale gradients accepted, half of the shares 16 steps old | 75.0 % |
-| stale gradients accepted, all shares 16 steps old | 13.8 % |
+| 32 shares per step (reference) | 90.2% |
+| stale shares rejected, 16 shares left per step | 88.0% |
+| stale shares rejected, 8 left | 85.2% |
+| stale shares rejected, 4 left | 81.6% |
+| stale shares rejected, 1 left | 60.9% |
+| stale gradients accepted, half of the shares 1 step old | 90.1% |
+| stale gradients accepted, all shares 1 step old | 90.0% |
+| stale gradients accepted, half of the shares 4 steps old | 89.1% |
+| stale gradients accepted, all shares 4 steps old | 42.1% |
+| stale gradients accepted, half of the shares 16 steps old | 75.0% |
+| stale gradients accepted, all shares 16 steps old | 13.8% |
 
 Losing shares degrades the model gradually. Gradients one step old cost nothing measurable at these update shifts; 4 steps
 old for all shares cost much more, and 16 steps old break the training. The protocol accepts one fixed delay and no other.
@@ -88,20 +88,20 @@ keeps the one whose 16 samples contain the most 3s. `python tools/training_share
 
 | Run | Accuracy | Other digits called 3 | Recall of the 3 |
 |---|---|---|---|
-| honest | 90.2 % | 1.4 % | 90.6 % |
-| 8 of 32 shares, 1 nonce (no grinding) | 90.3 % | 1.1 % | 88.9 % |
-| 16 of 32 shares, 1 nonce (no grinding) | 90.1 % | 1.2 % | 88.4 % |
-| 8 of 32 shares, 256 nonces | 90.0 % | 1.7 % | 92.2 % |
-| 8 of 32 shares, 4,096 nonces | 89.5 % | 2.1 % | 92.8 % |
-| 16 of 32 shares, 256 nonces | 89.6 % | 2.4 % | 94.1 % |
-| 16 of 32 shares, 4,096 nonces | 88.5 % | 3.3 % | 94.7 % |
+| honest | 90.2% | 1.4% | 90.6% |
+| 8 of 32 shares, 1 nonce (no grinding) | 90.3% | 1.1% | 88.9% |
+| 16 of 32 shares, 1 nonce (no grinding) | 90.1% | 1.2% | 88.4% |
+| 8 of 32 shares, 256 nonces | 90.0% | 1.7% | 92.2% |
+| 8 of 32 shares, 4,096 nonces | 89.5% | 2.1% | 92.8% |
+| 16 of 32 shares, 256 nonces | 89.6% | 2.4% | 94.1% |
+| 16 of 32 shares, 4,096 nonces | 88.5% | 3.3% | 94.7% |
 
 With 4,096 nonces the accuracy falls by 0.7 point with a quarter of the shares and by 1.7 points with half of them. The runs
 without grinding differ by 0.2 point. In the chain each of the 4,096 candidates would have to be a valid share, about 128
 block-equivalents of work per share (whitepaper, section 6).
 
 **Half of the shares against the gradient.** The attacker controls 16 of the 32 shares of every step and tries 64 nonces
-for each. After 300 steps the accuracy is 89.3 %, against 90.2 % without the attacker. Command:
+for each. After 300 steps the accuracy is 89.3%, against 90.2% without the attacker. Command:
 `python tools/training_shares_attacks.py --experiment adaptive` (about 7 minutes, one run).
 
 **Replay.** The float64 and int64 back ends give identical weights after 60 steps from the same nonces (printed by
@@ -111,8 +111,8 @@ for each. After 300 steps the accuracy is 89.3 %, against 90.2 % without the att
 ## 3. Simulation: delayed gradients
 
 **Choice of the update shifts.** The step moves a weight by one unit as soon as its residual passes `2^SU`, and the residual
-then empties at once. With `SU1 = 13` and `SU2 = 10`, one block of delay breaks the training: the accuracy falls from 97.3 %
-to 61.2 % (2 seeds). Slowing the update by two bits (`SU + 2`) removes the problem.
+then empties at once. With `SU1 = 13` and `SU2 = 10`, one block of delay breaks the training: the accuracy falls from 97.3%
+to 61.2% (2 seeds). Slowing the update by two bits (`SU + 2`) removes the problem.
 
 Final test accuracy (%) after 96,000 shares, MNIST test set, mean [min-max] over the seeds. A block lists 32 shares and
 applies one model step of 32 shares, computed on the model of `D` blocks earlier. The seeds change the share nonces only.
@@ -124,7 +124,7 @@ applies one model step of 32 shares, computed on the model of `D` blocks earlier
 | 2 | 44.2 [26.3-62.1] | 95.4 [95.2-95.7] | 93.4 [91.6-94.1] |
 | 4 | 22.9 [18.9-26.9] | 93.7 [91.7-94.4] | 94.3 [94.1-94.6] |
 
-The case of the chain is the row `D = 1` of the middle column: 95.7 %, 0.2 points below the same run without delay.
+The case of the chain is the row `D = 1` of the middle column: 95.7%, 0.2 points below the same run without delay.
 
 ```
 python tools/training_shares_delay.py --cache DIR --seeds 4 --per-block 32 --curves 1:32                    # SU1 = 15, SU2 = 12
@@ -137,10 +137,10 @@ tables come from runs that also listed 64 shares per block (`--per-block 32 64`,
 32-share column does not depend on the other block sizes.
 
 - With `SU + 2`, one block of delay costs 0.2 point and 2 blocks cost 0.5 point; 4 blocks cost 2.2 points on the mean, with
-  one seed at 91.7 %.
+  one seed at 91.7%.
 - With `SU + 3`, a delay of up to 4 blocks costs at most 1.0 point on the mean, but the accuracy without delay is 1.5 points
   lower than with `SU + 2`. `SU + 1` was not measured.
-- The price of `SU + 2` without delay is 1.4 points (95.9 % against 97.3 %); the curves still rise at 96,000 shares.
+- The price of `SU + 2` without delay is 1.4 points (95.9% against 97.3%); the curves still rise at 96,000 shares.
 - The runs use whole-block delays, fixed and equal for all shares, on MNIST.
 
 ## 4. Availability of shares (node software)
@@ -178,11 +178,11 @@ Accuracy of the model after 300 blocks, on the first 10,000 samples of the MNIST
 
 | pools | first rule | this version |
 |---|---|---|
-| 1 | - | 89.7 % |
-| 10 | 36.2 % | 89.9 % |
-| 20 | 24.4 % | 89.4 % |
+| 1 | - | 89.7% |
+| 10 | 36.2% | 89.9% |
+| 20 | 24.4% | 89.4% |
 
-An earlier study with the exact engines gave 36.1 % for the first rule with 10 pools between blocks 200 and 300. Across
+An earlier study with the exact engines gave 36.1% for the first rule with 10 pools between blocks 200 and 300. Across
 1,440 evaluation points of exact runs, accuracy is one function of the number of shares applied (mean absolute error
 2.8 points), which is why the number of shares listed per block predicts the accuracy.
 
@@ -197,7 +197,7 @@ Delay on every link, 10 and 20 pools, 150 blocks per row, otherwise idle machine
 | 20 | 50 ms | 30.1 | 37.6 | 0.80 | 2.10 | 35 of 150 |
 | 20 | 100 ms | 33.5 | 49.1 | 0.68 | 2.16 | 54 of 150 |
 
-The lab blocks last 2 s, so 100 ms per link loses 23 to 36 % of the blocks to forks, much more than 60 s blocks would
+The lab blocks last 2 s, so 100 ms per link loses 23 to 36% of the blocks to forks, much more than 60 s blocks would
 (100 ms against 60 s corresponds to about 3 ms against 2 s). The shares listed per block stay between 30 and 35 at every
 delay. The shares found per block rise to 41 and 49 because miners also report the shares of rounds whose block lost a fork.
 
@@ -206,12 +206,12 @@ same way, same file format), one run per row, 1,000 blocks, accuracy on the firs
 
 | pools | node | shares listed per block | accuracy after 300, 600 and 1,000 blocks |
 |---|---|---|---|
-| 1 | this version | 30.1 | 61.4 / 76.0 / 80.7 % |
-| 10 | this version | 32.2 | 74.7 / 79.3 / 82.0 % |
-| 10 | first rule | 0.35 | 23.3 / 54.9 / 61.2 % |
+| 1 | this version | 30.1 | 61.4 / 76.0 / 80.7% |
+| 10 | this version | 32.2 | 74.7 / 79.3 / 82.0% |
+| 10 | first rule | 0.35 | 23.3 / 54.9 / 61.2% |
 
-Training on this dataset is slower and noisier, with constants chosen for MNIST: the 10-pool run is at 74.7 % after 300
-blocks and 59.9 % at 401 blocks, and earlier runs of 300 blocks gave 41.3, 66.3 and 49.6 % for 1, 10 and 20 pools. The
+Training on this dataset is slower and noisier, with constants chosen for MNIST: the 10-pool run is at 74.7% after 300
+blocks and 59.9% at 401 blocks, and earlier runs of 300 blocks gave 41.3, 66.3 and 49.6% for 1, 10 and 20 pools. The
 difference between 1 and 10 pools is within that spread; the difference with the first rule is not. The blocks list 30 to
 33 shares at every number of pools.
 
@@ -224,30 +224,30 @@ that it lists only its own shares when it finds a block and nobody lists its sha
 
 | run | behaviour of pool 0 | power asked | share of the attempts reached | kept share | shares listed per block | accuracy at 100, 200, 300 blocks | samples predicted as class 3 |
 |---|---|---|---|---|---|---|---|
-| adv-honest-n10 | honest | - | - | - | 35.1 | 85.2 % / 87.2 % / 88.1 % | - |
-| final-honest | honest | - | 10 % | - | 28.1 | 85.7 % / 88.4 % / 89.3 % | 10.7 % |
-| rep-honest-a | honest | - | - | - | 33.7 | 85.6 % / 88.7 % / 87.4 % | - |
-| rep-honest-b | honest | - | - | - | 33.2 | 85.9 % / 88.4 % / 88.8 % | - |
-| strong-honest | honest | - | - | - | 30.8 | 82.6 % / 88.3 % / 90.0 % | 10.0 % |
-| adv-skew-0.10 | skew | 10 % | ~9 % | 25 % | 29.0 | 84.8 % / 88.4 % / 89.3 % | - |
-| final-skew-0.33-keep0.05 | skew | 33 % | 30 % | 5 % | 24.0 | 81.1 % / 87.6 % / 89.8 % | 9.9 % |
-| adv-skew-private-0.10 | skew-private | 10 % | ~8 % | 25 % | 26.0 | 86.1 % / 88.2 % / 89.3 % | - |
-| final-skew-private-0.25-keep0.25 | skew-private | 25 % | 25 % | 25 % | 20.3 | 85.7 % / 88.0 % / 89.0 % | 10.2 % |
-| final-skew-private-0.33-keep0.05 | skew-private | 33 % | 33 % | 5 % | 13.1 | 81.7 % / 85.0 % / 86.9 % | 10.1 % |
-| final-skew-private-0.33-keep0.25 | skew-private | 33 % | 28 % | 25 % | 16.3 | 83.7 % / 86.5 % / 88.0 % | 9.8 % |
-| final-withhold-0.33 | withhold | 33 % | 30 % | - | 23.0 | 85.2 % / 87.7 % / 88.6 % | 9.8 % |
+| adv-honest-n10 | honest | - | - | - | 35.1 | 85.2% / 87.2% / 88.1% | - |
+| final-honest | honest | - | 10% | - | 28.1 | 85.7% / 88.4% / 89.3% | 10.7% |
+| rep-honest-a | honest | - | - | - | 33.7 | 85.6% / 88.7% / 87.4% | - |
+| rep-honest-b | honest | - | - | - | 33.2 | 85.9% / 88.4% / 88.8% | - |
+| strong-honest | honest | - | - | - | 30.8 | 82.6% / 88.3% / 90.0% | 10.0% |
+| adv-skew-0.10 | skew | 10% | ~9% | 25% | 29.0 | 84.8% / 88.4% / 89.3% | - |
+| final-skew-0.33-keep0.05 | skew | 33% | 30% | 5% | 24.0 | 81.1% / 87.6% / 89.8% | 9.9% |
+| adv-skew-private-0.10 | skew-private | 10% | ~8% | 25% | 26.0 | 86.1% / 88.2% / 89.3% | - |
+| final-skew-private-0.25-keep0.25 | skew-private | 25% | 25% | 25% | 20.3 | 85.7% / 88.0% / 89.0% | 10.2% |
+| final-skew-private-0.33-keep0.05 | skew-private | 33% | 33% | 5% | 13.1 | 81.7% / 85.0% / 86.9% | 10.1% |
+| final-skew-private-0.33-keep0.25 | skew-private | 33% | 28% | 25% | 16.3 | 83.7% / 86.5% / 88.0% | 9.8% |
+| final-withhold-0.33 | withhold | 33% | 30% | - | 23.0 | 85.2% / 87.7% / 88.6% | 9.8% |
 
-The run names are those of the recorded outputs. One run per row. The five honest runs end at 87.4 to 90.0 % after 300
-blocks (mean 88.7 %, standard deviation 1.0 point), so a difference of one or two points is within the spread between runs.
-A pool asking for 25 % or 33 % of the attempts reaches it only in the `final-*` rows, which ran on 3 cores; on 6 cores one
-miner thread is limited to about 17 %, and those runs are kept only for the honest pools and the pool of 10 %.
+The run names are those of the recorded outputs. One run per row. The five honest runs end at 87.4 to 90.0% after 300
+blocks (mean 88.7%, standard deviation 1.0 point), so a difference of one or two points is within the spread between runs.
+A pool asking for 25% or 33% of the attempts reaches it only in the `final-*` rows, which ran on 3 cores; on 6 cores one
+miner thread is limited to about 17%, and those runs are kept only for the honest pools and the pool of 10%.
 
 Choosing shares by their bias does not move the model toward the class: the samples predicted as class 3 stay between 9.8
-and 10.2 % with a deviating pool (10.0 to 10.7 % in the honest runs; class 3 is 10.2 % of the samples), even when the pool
-holds 30 % of the attempts and reports only 5 % of its shares. Withholding every share of a pool with 30 % of the attempts
-costs nothing visible (88.6 %). The largest effect is the censoring producer (`skew-private`) with a third of the attempts:
+and 10.2% with a deviating pool (10.0 to 10.7% in the honest runs; class 3 is 10.2% of the samples), even when the pool
+holds 30% of the attempts and reports only 5% of its shares. Withholding every share of a pool with 30% of the attempts
+costs nothing visible (88.6%). The largest effect is the censoring producer (`skew-private`) with a third of the attempts:
 a third of the blocks list only its own few shares, so a block lists 13 shares on average instead of 30, and the accuracy
-trails the honest runs by about 3 points after 200 blocks (85.0 %) and by 1.8 points after 300 blocks (86.9 %). The
+trails the honest runs by about 3 points after 200 blocks (85.0%) and by 1.8 points after 300 blocks (86.9%). The
 training slows down and shows no bias. The adversaries are fixed strategies, not an optimisation of the loss of the model with
 look-ahead.
 
@@ -256,7 +256,7 @@ look-ahead.
 These results were obtained outside this repository and are not reproduced from it.
 
 - **A long chain.** One chain of 3,000 blocks with the exact engines, a delay of one block, real hashes and a single virtual
-  miner: 96,022 shares applied and a test accuracy of 95.91 % (the simulation of section 3 gives 95.7 %). The number of
+  miner: 96,022 shares applied and a test accuracy of 95.91% (the simulation of section 3 gives 95.7%). The number of
   shares per round is geometric (mean 32.3, standard deviation 32.3 over 4,050 rounds; two rounds exceeded the 256-share
   limit).
 - **Residual accounting.** For every entry and every step, `2^SU * W' - R' = 2^SU * W - R - G + 2^SU * wc + lr`, where `wc`
@@ -264,13 +264,13 @@ These results were obtained outside this repository and are not reproduced from 
   grouping of the shares and any delay, and was checked on 7.7e10 entries of the whole domain of the consensus, on 139
   trainings of 16,384 shares and on two real 100-block chains with 88 replays of their shares, with three implementations.
   The residual bound discards charge when `|R + G| > 2T`, which cannot happen with at most 16 shares per step in layer 2 or
-  128 in layer 1. On two chains of 100 blocks mined at the start of training under the first rule (accuracy 78.1 % and
-  82.6 % at block 100), layer 2 discarded 25.8 % and 9.6 % of its gradient charge and layer 1 almost nothing.
-- **Grouping and delay.** With the shares of those chains applied one by one, the final accuracy is 86.4 % and 87.0 %; with
-  the chain's own groups and a delay of one block, 78.1 % and 82.6 %; with a delay of two blocks, 30 % and 45 %. In 139
+  128 in layer 1. On two chains of 100 blocks mined at the start of training under the first rule (accuracy 78.1% and
+  82.6% at block 100), layer 2 discarded 25.8% and 9.6% of its gradient charge and layer 1 almost nothing.
+- **Grouping and delay.** With the shares of those chains applied one by one, the final accuracy is 86.4% and 87.0%; with
+  the chain's own groups and a delay of one block, 78.1% and 82.6%; with a delay of two blocks, 30% and 45%. In 139
   trainings of 16,384 shares with groups of 4 and 16 shares and delays of 0 to 2 blocks, the accuracy stayed within
   1.6 points of the one-by-one run; a group of 32 shares with a delay of 2 blocks lost 7.7 points at 4,096 shares.
-- **One-step bound in practice.** An adversary with 10 %, 25 % or 33 % of the power finds about 3, 8 or 11 of the 32 shares
+- **One-step bound in practice.** An adversary with 10%, 25% or 33% of the power finds about 3, 8 or 11 of the 32 shares
   of a round. The exact maximum difference of one step is 2 only when `k C >= 2^SU`, so Theorem 1 is not tight.
 - **Mechanisms that keep the first rule.** Listing the solution nonce of the parent adds at most one share per block;
   relaying the shares of the producer with the block has the ceiling `1 + 31 sum_i f_i^2` (4.04 shares per block with 10
@@ -280,9 +280,9 @@ These results were obtained outside this repository and are not reproduced from 
   incentives with twenty seeds, 1,000 blocks each) compared shares bound to the parent and not paid (V1), paid at a fixed
   price with a commission for the producer (V2), and paid from a budget of the reward shared among the listed shares (V3).
   All three give about 32 shares per block. Without payment the number listed depends on the default behaviour of the
-  software (30 % of the power that does not relay lowers it from 32.2 to 23.5 with 10 pools). With V3, a pool that lists
-  only its own shares earns 33 to 48 % more. With V2, listing only one's own shares stops paying for pools with 10 % of the
-  power or less once the commission reaches 10 %, and still earns a pool with 34 % of the power 3.9 % more. This version
+  software (30% of the power that does not relay lowers it from 32.2 to 23.5 with 10 pools). With V3, a pool that lists
+  only its own shares earns 33 to 48% more. With V2, listing only one's own shares stops paying for pools with 10% of the
+  power or less once the commission reaches 10%, and still earns a pool with 34% of the power 3.9% more. This version
   does not pay shares.
 
 ## 7. Validation of the implementation
@@ -338,5 +338,5 @@ run is valid only if the checksum of all tickets is the same for all engines. Th
 The reference runs at 2.7 thousand attempts per second per thread with MSVC and 1.8 thousand with gcc 15 at `-O2` (the flag
 of `neb-pow/build.rs`), which is why the ratio is larger on Linux. The column "with checks" is the sparse engine run as a
 miner runs it (reference verification of hits and one audit in 4,096 attempts); it is within the noise of the plain sparse
-engine, whose repetitions differ by up to 10 % on 32 threads. These rates belong to this machine; other processors, GPUs and
+engine, whose repetitions differ by up to 10% on 32 threads. These rates belong to this machine; other processors, GPUs and
 energy per attempt were not measured.

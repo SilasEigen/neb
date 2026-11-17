@@ -4,7 +4,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/). The protocol version and the genesis of the network are listed separately from
 the software version: a node checks them, not the software version.
 
+## [1.0.1] - 2026-11-17
+
+The main network starts with another dataset in slot 1, so it has another genesis block. **Every node and every
+miner of 1.0.0 must be replaced, with the new dataset file, before the start on 2026-11-18 at 14:00 UTC**; a node of
+1.0.0 cannot connect to this network. The start time, the target, the beacon and the carry-over are unchanged.
+
+- Main network: slot 1 trains the KEP1 network on signals found in the light curves of the TESS mission, labelled
+  eclipse or junk (Astronet-Triage-v2, Tey et al. 2023, CC BY 4.0), in place of the RET2 network on the retinal
+  scans. Slot 0, the Kepler transit signals, is unchanged. Both slots run the same network, so a miner has the same
+  attempt rate on every block. In simulation the TESS model reaches about 95% after 3,000 blocks (1,860 test
+  signals, 86.6% of them junk; 9 eclipses in 10 found).
+- Dataset file of the main network: 16,087,037 bytes instead of 222,320,684, two `NMD2` datasets of architecture 1.
+  `tools/make_mainnet_datasets.py` builds it from the file of the test network and from the public record of the
+  TESS signals, and writes the test signals kept out of the chain.
+- Genesis: the beacon tag is `neb-mainnet-beacon-2`, which gives a new genesis id and a new network magic
+  (`docs/mainnet.md`). The coinbase of the genesis block pays the same reward, project share and carry-over lists as
+  in 1.0.0.
+- A node of 1.0.1 refuses the dataset file of 1.0.0 and a data directory made by 1.0.0, and says so. That directory
+  holds no block: delete it. The wallet file is not in it and works as before.
+- The test network (`--testnet`) and its dataset file are unchanged.
+
 ## [1.0.0] - 2026-11-16
+
+This release was replaced by 1.0.1 before the start of the network: its genesis block had no successor.
 
 The main network. Without an option the software runs it; the test network of protocol 3 stays behind `--testnet`.
 The network starts on 2026-11-18 at 14:00 UTC, the time of its genesis block: block 1 cannot be dated earlier, and

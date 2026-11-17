@@ -1,6 +1,6 @@
 # NEB
 
-NEB (Neural Engine Byte) is a proof-of-work cryptocurrency where mining trains a neural network. Every mining attempt is one training step of a small network that the chain owns, computed in exact integer arithmetic. The chain trains two small convolutional networks with 4-bit weights on public scientific data, one block each in turn: transit signals of the Kepler mission (NASA Exoplanet Archive), sorted into planet candidates and false positives, and retinal OCT scans (OCTMNIST) at 64 x 64, sorted into normal and abnormal. A node checks a block by running its attempts again, about 2 ms of one CPU core per attempt on the first network and 7 ms on the second, with no zero-knowledge proof and no trusted party.
+NEB (Neural Engine Byte) is a proof-of-work cryptocurrency where mining trains a neural network. Every mining attempt is one training step of a small network that the chain owns, computed in exact integer arithmetic. The chain trains two small convolutional networks with 4-bit weights on public scientific data, one block each in turn, both on exoplanet searches: transit signals of the Kepler mission (NASA Exoplanet Archive), sorted into planet candidates and false positives, and signals found in the light curves of the TESS mission (Astronet-Triage-v2), sorted into eclipses and junk. A node checks a block by running its attempts again, about 2 ms of one CPU core per attempt, with no zero-knowledge proof and no trusted party.
 
 [Whitepaper](docs/whitepaper.md) | [Specification](spec/shares.md) | [Node and chain](spec/node.md) | [Main network](docs/mainnet.md) | [Node guide](docs/testnet.md) | [Docker](docs/docker.md) | [Mining engines](docs/mining.md) | [Experiments](docs/experiments.md)
 
@@ -47,11 +47,11 @@ NEB's innovation lies in the protocol-level integration of deterministic neural 
 | Money layer | UTXO, Ed25519 signatures, BLAKE3, no virtual machine |
 | Verification | about 0.5 ms of one CPU core per attempt, 17 ms for a typical block |
 
-In simulation of the protocol, the Kepler model reaches 88.8% on stars it never trained on (a float network of the same shape trained with Adam: 89.0%), and the retina model 55% on four balanced classes after 12,000 blocks. The models of the main network are small convolutional networks ([spec/nebhash-v2.md](spec/nebhash-v2.md)): in simulation, 90.8% for Kepler and 81 to 83% for the retina on a normal or abnormal task (500 balanced test scans). Earlier measurements on MNIST: 96.0% test accuracy in simulation, and on the node software 10 pools train the model as well as one (89.9% after 300 blocks).
+In simulation of the protocol, the Kepler model reaches 88.8% on stars it never trained on (a float network of the same shape trained with Adam: 89.0%), and the retina model 55% on four balanced classes after 12,000 blocks. The models of the main network are small convolutional networks ([spec/nebhash-v2.md](spec/nebhash-v2.md)): in simulation, 90.8% for Kepler and about 95% for TESS after 3,000 blocks, on 1,860 test signals of which 86.6% are junk, with 9 eclipses in 10 found. The test network trained the same kind of network on retinal scans, normal or abnormal: 81 to 83% in simulation (500 balanced test scans). Earlier measurements on MNIST: 96.0% test accuracy in simulation, and on the node software 10 pools train the model as well as one (89.9% after 300 blocks).
 
 ## Status
 
-Version 1.0.0 runs the main network: protocol 3, two models from the first block, parameters in [docs/mainnet.md](docs/mainnet.md). Its genesis block pays each lock a tenth of the balance it held on each of the two test networks, on the same wallet file ([docs/carry-over.md](docs/carry-over.md)). By default a node dials the public relays of the network (port 3440) and then learns other addresses from its peers; `--no-seeds` keeps it alone, and `--connect` and `--seed` choose other peers.
+Version 1.0.1 runs the main network: protocol 3, two models from the first block, parameters in [docs/mainnet.md](docs/mainnet.md). Its genesis block pays each lock a tenth of the balance it held on each of the two test networks, on the same wallet file ([docs/carry-over.md](docs/carry-over.md)). By default a node dials the public relays of the network (port 3440) and then learns other addresses from its peers; `--no-seeds` keeps it alone, and `--connect` and `--seed` choose other peers.
 
 The test network of protocol 3 stays in the software for trials of upgrades: `neb-node --run --testnet`, with the dataset file of release 0.3.1 ([docs/testnet.md](docs/testnet.md)). Its coins have no value.
 
@@ -59,10 +59,10 @@ The test network of protocol 3 stays in the software for trials of upgrades: `ne
 
 ### From a release
 
-Download from the release page the archive for your system, `neb-datasets.bin` (the two datasets, 222 MB, pinned by hash) and `SHA256SUMS`, and check them as described in "Releases". On Windows, in PowerShell:
+Download from the release page the archive for your system, `neb-datasets.bin` (the two datasets, 16 MB, pinned by hash) and `SHA256SUMS`, and check them as described in "Releases". On Windows, in PowerShell:
 
 ```powershell
-Expand-Archive neb-1.0.0-windows-x86_64.zip neb; Move-Item neb-datasets.bin neb; cd neb
+Expand-Archive neb-1.0.1-windows-x86_64.zip neb; Move-Item neb-datasets.bin neb; cd neb
 .\neb-wallet.exe --wallet wallet.txt new         # asks for a password, prints your address; keep a copy of wallet.txt and of the password
 $lock = .\neb-wallet.exe --wallet wallet.txt lock
 .\neb-node.exe --run --dataset neb-datasets.bin --datadir data --miner-lock $lock
@@ -78,7 +78,7 @@ In a second window:
 On Linux:
 
 ```bash
-mkdir neb && tar -xzf neb-1.0.0-linux-x86_64.tar.gz -C neb && mv neb-datasets.bin neb && cd neb
+mkdir neb && tar -xzf neb-1.0.1-linux-x86_64.tar.gz -C neb && mv neb-datasets.bin neb && cd neb
 ./neb-wallet --wallet wallet.txt new
 ./neb-node --run --dataset neb-datasets.bin --datadir data --miner-lock "$(./neb-wallet --wallet wallet.txt lock)" &
 ./neb-miner-cpu --node 127.0.0.1:3441 --dataset neb-datasets.bin    # or neb-miner-gpu
@@ -104,8 +104,8 @@ Requirements: Rust, a C compiler, and Python 3 with numpy for the dataset tool.
 git clone https://github.com/SilasEigen/neb.git && cd neb
 (cd node && cargo build --release --locked)                 # neb-node, neb-wallet, neb-miner-cpu
 python tools/make_datasets.py --cache ../neb-cache --out ../neb-testnet-datasets.bin   # the four datasets of the test network
-python -I tools/make_mainnet_datasets.py ../neb-testnet-datasets.bin ../neb-datasets.bin   # or take neb-datasets.bin from the release
-node/target/release/neb-node --dataset-hash ../neb-datasets.bin # fbabd0bdde0b43aef946e7031ff6e037c8a2a5d0ae2616b49b2b49b11af8010e
+python -I tools/make_mainnet_datasets.py ../neb-testnet-datasets.bin --tess ../neb-tess --out ../neb-datasets.bin   # needs astropy and the two files of the TESS record; or take neb-datasets.bin from the release
+node/target/release/neb-node --dataset-hash ../neb-datasets.bin # 790b57fbd830f3dcbe7de9d1146aa89a0a20799118e30dd48a343a5c98f19e72
 ```
 
 `cargo build --release --locked -p neb-gpuminer --features cuda` adds `neb-miner-gpu` (CUDA toolkit 13). The miners can also use optional AVX-512 and tensor-core engines, off by default and checked against the reference: see [docs/mining.md](docs/mining.md). Node options, ports and wallet commands are in [docs/testnet.md](docs/testnet.md).
@@ -137,7 +137,7 @@ sha256sum -c SHA256SUMS
 On Windows, in PowerShell, compare these hashes with the lines of `SHA256SUMS` (Gpg4win verifies the signature):
 
 ```powershell
-Get-FileHash -Algorithm SHA256 neb-1.0.0-windows-x86_64.zip, neb-datasets.bin
+Get-FileHash -Algorithm SHA256 neb-1.0.1-windows-x86_64.zip, neb-datasets.bin
 ```
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).

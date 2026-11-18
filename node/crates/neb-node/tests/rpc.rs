@@ -133,6 +133,40 @@ fn read_methods_and_errors() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// getutxos lists the unspent outputs of a lock on the best chain, and nothing for a lock that holds none.
+#[test]
+fn getutxos_lists_the_outputs_of_a_lock() {
+    let dir = temp_dir("utxos");
+    let node = Node::open(NodeConfig { network: network(demo::MINER_LOCK), data_dir: dir.clone(), verify_pow: false })
+        .expect("node");
+    add_chain(&node, 2);
+    let rpc = node.start_rpc("127.0.0.1:0".parse().unwrap()).expect("rpc");
+    let response = call(rpc.addr, "getutxos", vec![Value::String(hex(&demo::MINER_LOCK))]);
+    let outputs = result(&response).as_array().unwrap();
+    let mut heights: Vec<i64> = outputs.iter().map(|o| o.get("height").unwrap().as_i64().unwrap()).collect();
+    heights.sort_unstable();
+    assert_eq!(heights, vec![0, 1, 2]);
+    for output in outputs {
+        let txid = output.get("txid").unwrap().as_str().unwrap();
+        let op = OutPoint {
+            txid: decode_hex(txid).try_into().unwrap(),
+            index: output.get("index").unwrap().as_i64().unwrap() as u32,
+        };
+        let utxo = node.utxo(&op).expect("the output is unspent");
+        assert_eq!(output.get("amount").unwrap().as_i64(), Some(utxo.amount as i64));
+        assert_eq!(output.get("locktype").unwrap().as_i64(), Some(utxo.lock_type as i64));
+        assert_eq!(output.get("coinbase").unwrap().as_bool(), Some(true));
+        assert_eq!(utxo.lock_data, demo::MINER_LOCK);
+    }
+    let none = call(rpc.addr, "getutxos", vec![Value::String(hex(&[0x77; 32]))]);
+    assert_eq!(result(&none).as_array().unwrap().len(), 0);
+    assert_eq!(error_code(&call(rpc.addr, "getutxos", vec![Value::String("12".into())])), -8);
+    assert_eq!(error_code(&call(rpc.addr, "getutxos", vec![])), -32602);
+    drop(rpc);
+    drop(node);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // getmodel gives the packed weights of the tip model (the weights hash of getinfo) and, with "genesis", those of the
 // initial model; any other parameter is refused.
 #[test]

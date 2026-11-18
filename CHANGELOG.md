@@ -4,6 +4,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 [Semantic Versioning](https://semver.org/). The protocol version and the genesis of the network are listed separately from
 the software version: a node checks them, not the software version.
 
+## [Unreleased]
+
+- JSON-RPC: `getutxos` returns the unspent outputs of one lock on the best chain, so a wallet reads its balance and
+  builds a payment without reading the chain block by block. The consensus rules, the protocol version and the
+  genesis are unchanged.
+
 ## [1.0.1] - 2026-11-17
 
 The main network starts with another dataset in slot 1, so it has another genesis block. **Every node and every

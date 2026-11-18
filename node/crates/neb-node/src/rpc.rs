@@ -331,6 +331,22 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             map.insert("weights".to_string(), Value::String(hex(&model.packed_weights())));
             Ok(Value::Object(map))
         }
+        // The unspent outputs of the best chain with that lock data, for a wallet that keeps no copy of the chain.
+        "getutxos" => {
+            let text = required_str(params, 0, "lock")?;
+            let lock = parse_hex32(text).ok_or_else(|| RpcError::new(-8, "lock must be 64 hex characters"))?;
+            let outputs = node.utxos_of(&lock).into_iter().map(|(op, utxo)| {
+                let mut map = BTreeMap::new();
+                map.insert("txid".to_string(), Value::String(hex(&op.txid)));
+                map.insert("index".to_string(), Value::Number(op.index as i64));
+                map.insert("amount".to_string(), Value::Number(utxo.amount as i64));
+                map.insert("locktype".to_string(), Value::Number(utxo.lock_type as i64));
+                map.insert("height".to_string(), Value::Number(utxo.height as i64));
+                map.insert("coinbase".to_string(), Value::Bool(utxo.coinbase));
+                Value::Object(map)
+            });
+            Ok(Value::Array(outputs.collect()))
+        }
         // Mempool admission only (spec/node.md section 6.4); the node announces
         // the transaction to its peers.
         "sendrawtransaction" => {

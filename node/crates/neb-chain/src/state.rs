@@ -291,6 +291,11 @@ impl ChainState {
         &self.utxos
     }
 
+    /// The unspent outputs whose lock data is `lock`, in outpoint order. Reads the whole set.
+    pub fn utxos_of(&self, lock: &[u8; 32]) -> Vec<(OutPoint, Utxo)> {
+        self.utxos.iter().filter(|(_, u)| u.lock_data == *lock).map(|(op, u)| (*op, u.clone())).collect()
+    }
+
     pub fn unspent_total(&self) -> u128 {
         self.unspent_total
     }

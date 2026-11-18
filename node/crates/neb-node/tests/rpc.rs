@@ -158,6 +158,9 @@ fn getutxos_lists_the_outputs_of_a_lock() {
         assert_eq!(output.get("coinbase").unwrap().as_bool(), Some(true));
         assert_eq!(utxo.lock_data, demo::MINER_LOCK);
     }
+    // the node stops reading at the limit it is given
+    assert_eq!(node.utxos_of(&demo::MINER_LOCK, 2).len(), 2);
+    assert_eq!(node.utxos_of(&demo::MINER_LOCK, 20_000).len(), 3);
     let none = call(rpc.addr, "getutxos", vec![Value::String(hex(&[0x77; 32]))]);
     assert_eq!(result(&none).as_array().unwrap().len(), 0);
     assert_eq!(error_code(&call(rpc.addr, "getutxos", vec![Value::String("12".into())])), -8);

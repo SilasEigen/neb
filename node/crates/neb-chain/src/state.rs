@@ -291,9 +291,10 @@ impl ChainState {
         &self.utxos
     }
 
-    /// The unspent outputs whose lock data is `lock`, in outpoint order. Reads the whole set.
-    pub fn utxos_of(&self, lock: &[u8; 32]) -> Vec<(OutPoint, Utxo)> {
-        self.utxos.iter().filter(|(_, u)| u.lock_data == *lock).map(|(op, u)| (*op, u.clone())).collect()
+    /// The first `limit` unspent outputs whose lock data is `lock`, in outpoint order. Reads the set until the limit.
+    pub fn utxos_of(&self, lock: &[u8; 32], limit: usize) -> Vec<(OutPoint, Utxo)> {
+        let owned = self.utxos.iter().filter(|(_, u)| u.lock_data == *lock);
+        owned.take(limit).map(|(op, u)| (*op, u.clone())).collect()
     }
 
     pub fn unspent_total(&self) -> u128 {

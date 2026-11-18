@@ -364,8 +364,8 @@ impl Node {
     pub fn utxo(&self, op: &neb_chain::OutPoint) -> Option<neb_chain::Utxo> {
         self.inner.lock().expect("node lock").state.utxo(op).cloned()
     }
-    pub fn utxos_of(&self, lock: &[u8; 32]) -> Vec<(neb_chain::OutPoint, neb_chain::Utxo)> {
-        self.inner.lock().expect("node lock").state.utxos_of(lock)
+    pub fn utxos_of(&self, lock: &[u8; 32], limit: usize) -> Vec<(neb_chain::OutPoint, neb_chain::Utxo)> {
+        self.inner.lock().expect("node lock").state.utxos_of(lock, limit)
     }
 
     pub fn has_tx(&self, id: &[u8; 32]) -> bool {

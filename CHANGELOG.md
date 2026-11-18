@@ -7,8 +7,8 @@ the software version: a node checks them, not the software version.
 ## [Unreleased]
 
 - JSON-RPC: `getutxos` returns the unspent outputs of one lock on the best chain, so a wallet reads its balance and
-  builds a payment without reading the chain block by block. The consensus rules, the protocol version and the
-  genesis are unchanged.
+  builds a payment without reading the chain block by block. A lock with more than 20,000 unspent outputs is an
+  error. The consensus rules, the protocol version and the genesis are unchanged.
 
 ## [1.0.1] - 2026-11-17
 

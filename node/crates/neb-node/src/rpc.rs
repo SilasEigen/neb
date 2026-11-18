@@ -225,6 +225,9 @@ fn required_height(params: &[Value]) -> Result<u32, RpcError> {
     u32::try_from(value).map_err(|_| RpcError::new(-8, "block height out of range"))
 }
 
+/// The most outputs that `getutxos` gives for one lock.
+const MAX_UTXOS: usize = 20_000;
+
 fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
     let method =
         request.get("method").and_then(Value::as_str).ok_or_else(|| RpcError::new(-32600, "method is missing"))?;
@@ -332,10 +335,15 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             Ok(Value::Object(map))
         }
         // The unspent outputs of the best chain with that lock data, for a wallet that keeps no copy of the chain.
+        // The answer is bounded: a lock with more outputs than `MAX_UTXOS` reads the chain with `getblock`.
         "getutxos" => {
             let text = required_str(params, 0, "lock")?;
             let lock = parse_hex32(text).ok_or_else(|| RpcError::new(-8, "lock must be 64 hex characters"))?;
-            let outputs = node.utxos_of(&lock).into_iter().map(|(op, utxo)| {
+            let found = node.utxos_of(&lock, MAX_UTXOS + 1);
+            if found.len() > MAX_UTXOS {
+                return Err(RpcError::new(-8, "too many outputs for one call"));
+            }
+            let outputs = found.into_iter().map(|(op, utxo)| {
                 let mut map = BTreeMap::new();
                 map.insert("txid".to_string(), Value::String(hex(&op.txid)));
                 map.insert("index".to_string(), Value::Number(op.index as i64));

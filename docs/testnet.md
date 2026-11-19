@@ -44,7 +44,7 @@ The node refuses to start when the dataset file does not have the pinned hash. T
 | peer-to-peer port | 3440 |
 | work service port | 3441, loopback only |
 | JSON-RPC port | 8432, loopback only |
-| software version | 1.0.1 with `--testnet`; 0.3.1 was the last release that ran this network by default |
+| software version | 1.0.2 with `--testnet`; 0.3.1 was the last release that ran this network by default |
 | protocol version | 3 (one model per dataset; a node of protocol 2 or 1 does not connect) |
 | network magic | `1db70ba3` (four bytes, hex) |
 | default maximum peers | 8 (`--max-peers`) |
@@ -227,15 +227,15 @@ The node sends the model of the parent block (50,816 bytes of packed weights, an
 ## Running the GPU miner
 
 ```
-neb-miner-gpu --node HOST:PORT (--dataset FILE | --synthetic) [--devices LIST] [--gpu-kernel k0|k1|k2] [--plain] [--stats FILE]
-neb-miner-gpu --selftest [--gpu-kernel k0|k1|k2] [--dataset FILE | --synthetic] [--devices LIST]
+neb-miner-gpu --node HOST:PORT (--dataset FILE | --synthetic) [--devices LIST] [--gpu-kernel k0|k1|k2|table] [--plain] [--stats FILE]
+neb-miner-gpu --selftest [--gpu-kernel k0|k1|k2|table] [--dataset FILE | --synthetic] [--devices LIST]
 ```
 
 The GPU miner takes the place of the CPU miner on the same work service, with the same options for `--node`, `--dataset` and `--synthetic`. It needs an NVIDIA GPU of compute capability 7.5 or later (Turing and later; the 8-bit dot-product instruction `dp4a`) and a driver for CUDA 13 (580 or later); the CUDA runtime is linked into the binary. The release has it for Windows and Linux (x86_64, glibc 2.34 or later). `--devices` is a comma-separated list of device indexes (default: all devices); every device mines the same job, each on its own ranges of nonces. `--stats FILE` rewrites a JSON file every two seconds with the rate of each device (the HiveOS package reads it).
 
 A device evaluates 65,536 nonces of the reference header at a time, keeps the nonces whose ticket meets the share target, and the miner evaluates those nonces again with the C reference before it sends them as shares (and as a solution when the ticket also meets the block target). A nonce that the device reports and the check refuses is counted and printed as a warning. A scan that has more hits than the device can report (4,096) is split into halves until every hit is reported; a result is never cut.
 
-`--gpu-kernel` chooses the kernel. `k0`, the default, is the dp4a kernel of `pow/gpu/shares_cuda.cu`. `k1` and `k2` use the int8 tensor-core instructions (`pow/gpu/shares_tc.cu`; K2 skips the zero entries) and need compute capability 8.0 or later (Ampere and later); on an older device the miner says so and uses K0. They are mining optimisations, not consensus, and never the default. A device uses `k1` or `k2` only after a self-test against the C reference (the hits of three bounds and exact tickets, for five models, the dataset of the node and the synthetic one). While mining, the miner checks each model it uploads on four nonces, audits the exact ticket of one nonce every 64 batches, and treats a nonce that the reference refuses as a fault; on any fault the device goes back to K0, uploads the model again and scans the batch again. `--selftest` runs the self-test of the requested kernel on each device (by default K0, K1 and K2, skipping the kernels a device does not support; the synthetic dataset unless `--dataset` is given) and exits with 0 when every tested kernel equals the reference.
+`--gpu-kernel` chooses the kernel. `k0`, the default, is the dp4a kernel of `pow/gpu/shares_cuda.cu`. `k1` and `k2` use the int8 tensor-core instructions (`pow/gpu/shares_tc.cu`; K2 skips the zero entries) and need compute capability 8.0 or later (Ampere and later); on an older device the miner says so and uses K0. They are mining optimisations, not consensus, and never the default. `table` is for the convolutional networks (`pow/gpu/nebhash2_table_cuda.cu`): for each model the miner evaluates every sample of the dataset once on the CPU, uploads one row per sample, and a device builds an attempt from 16 rows, as `--engine table` does on the CPU. It gives the tickets of the reference; a device that fails its self-test, or disagrees with the reference during the run, goes back to the kernel of `pow/gpu/nebhash2_cuda.cu`. With `table` a device evaluates 524,288 nonces at a time. A device uses `k1` or `k2` only after a self-test against the C reference (the hits of three bounds and exact tickets, for five models, the dataset of the node and the synthetic one). While mining, the miner checks each model it uploads on four nonces, audits the exact ticket of one nonce every 64 batches, and treats a nonce that the reference refuses as a fault; on any fault the device goes back to K0, uploads the model again and scans the batch again. `--selftest` runs the self-test of the requested kernel on each device (by default K0, K1 and K2, skipping the kernels a device does not support; the synthetic dataset unless `--dataset` is given) and exits with 0 when every tested kernel equals the reference.
 
 Build, with the CUDA toolkit (13.x) and, on Windows, the MSVC build tools:
 
@@ -244,11 +244,11 @@ cd node
 cargo build --release --locked -p neb-gpuminer --features cuda
 ```
 
-`NEB_CUDA_ARCHS` sets the GPU generations to compile for, as compute capabilities without the dot (default `75,86,89,90,120`; the tensor-core kernels are built for all of them but only run from 8.0 on). The build makes three libraries, one for K0 and the scan, one for K1 and K2 and one for the nebhash v2 kernel: K0 and K1/K2 must not be device-linked together (`pow/gpu/README.md`). On Linux set `CUDA_PATH` to the toolkit (`/usr/local/cuda-13.3`, for example) and put its `bin` in `PATH`; the build needs `gcc` and `nvcc`.
+`NEB_CUDA_ARCHS` sets the GPU generations to compile for, as compute capabilities without the dot (default `75,86,89,90,120`; the tensor-core kernels are built for all of them but only run from 8.0 on). The build makes four libraries, one for K0 and the scan, one for K1 and K2, one for the nebhash v2 kernel and one for its table kernel: K0 and K1/K2 must not be device-linked together (`pow/gpu/README.md`). On Linux set `CUDA_PATH` to the toolkit (`/usr/local/cuda-13.3`, for example) and put its `bin` in `PATH`; the build needs `gcc` and `nvcc`.
 
 ## Mining on HiveOS
 
-The release has a package for the custom miner of HiveOS, `nebminer-1.0.1.tar.gz`, which runs the main network. It holds the node, the wallet, the GPU miner and the dataset file, and the four scripts of the HiveOS interface (`tools/hiveos`). `tools/hiveos-package.sh` builds it. The miner uses every GPU of the rig by itself, so the flight sheet does not choose cards, and an option such as `--devices 0,1` in the extra arguments narrows the choice.
+The release has a package for the custom miner of HiveOS, `nebminer-1.0.2.tar.gz`, which runs the main network. It holds the node, the wallet, the GPU miner and the dataset file, and the four scripts of the HiveOS interface (`tools/hiveos`). `tools/hiveos-package.sh` builds it. The miner uses every GPU of the rig by itself, so the flight sheet does not choose cards, and an option such as `--devices 0,1` in the extra arguments narrows the choice.
 
 Create a flight sheet with a custom miner:
 
@@ -256,12 +256,12 @@ Create a flight sheet with a custom miner:
 |---|---|
 | Miner | Custom |
 | Miner name | `nebminer` |
-| Installation URL | the link of `nebminer-1.0.1.tar.gz` on the release page |
+| Installation URL | the link of `nebminer-1.0.2.tar.gz` on the release page |
 | Hash algorithm | leave empty or choose any |
 | Wallet and worker template | your `neb1...` address (a suffix such as `.%WORKER_NAME%` is ignored) |
 | Pool URL | one or more relays as `HOST:PORT`, separated by spaces |
 | Pass | empty |
-| Extra config arguments | arguments for `neb-miner-gpu`, for example `--devices 0,1` |
+| Extra config arguments | arguments for `neb-miner-gpu`, for example `--devices 0,1` or `--gpu-kernel table` |
 
 The rig needs an image based on Ubuntu 22.04 ("jammy"; the 20.04 images have a glibc that is too old), an NVIDIA driver of the 580 series or later (chosen in the settings of the rig) and cards of compute capability 7.5 or later (Turing and later). The coins go to the address of the flight sheet; the rig needs no wallet file and no secret key. `h-run.sh` starts the node (data in the package folder, log `/var/log/miner/nebminer/nebminer-node.log`) and the miner (log `/var/log/miner/nebminer/nebminer.log`, shown as the miner screen). `h-stats.sh` reads the stats file that the miner rewrites every two seconds with `--stats`: the rate of each card in kH/s, temperature, fan, PCI bus numbers, uptime and the blocks that the node accepted and refused. With the Pool URL field empty the node dials the default seeds of the network.
 

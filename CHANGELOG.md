@@ -6,6 +6,17 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-11-19
+
+An optional release: same protocol, network, genesis and dataset file as 1.0.1, and the nodes and miners of both
+versions work together. It adds a kernel to the GPU miner.
+
+- `neb-miner-gpu --gpu-kernel table`: a kernel for the convolutional networks that reads a table of per-sample
+  gradients. For each model the miner evaluates every sample of the dataset once on the CPU and uploads one row per
+  sample; a device then builds an attempt from 16 rows. It gives the tickets of the reference, which still checks
+  every share and solution before it is reported. A device that fails the self-test of the kernel, or disagrees
+  with the reference during the run, goes back to the kernel of 1.0.1. Never the default.
+- `neb-miner-gpu --selftest --dataset FILE` runs both kernels of the convolutional networks.
 - JSON-RPC: `getutxos` returns the unspent outputs of one lock on the best chain, so a wallet reads its balance and
   builds a payment without reading the chain block by block. A lock with more than 20,000 unspent outputs is an
   error. The consensus rules, the protocol version and the genesis are unchanged.

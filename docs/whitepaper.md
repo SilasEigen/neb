@@ -118,8 +118,9 @@ key through the nonce field of the header, the extranonce of the coinbase or the
 4. **Ticket.** `ticket = BLAKE3(digest || key)`.
 
 The constants are `S1 = 5`, `S2 = 5`, `SB = 3`, `CLIP = 256` and 16 samples per attempt (`spec/shares.md` sections 2 and 5).
-One attempt costs about 3.3 million multiply-accumulates: 16 x 784 x 128 for the forward pass of layer 1, the same for `G1`,
-and about 20,000 each for the products of layer 2 and the error propagation.
+Computed directly, one attempt costs about 3.3 million multiply-accumulates: 16 x 784 x 128 for the forward pass of layer
+1, the same for `G1`, and about 20,000 each for the products of layer 2 and the error propagation. Section 6.1 describes a
+table that lowers this cost.
 
 The ticket depends on the weights through the gradient, so it is the ticket of the attempt on a given model state. The
 block of a chain whose tip is `P` is an attempt on the model `M(P)` whose key is the hash of its own header; it is valid
@@ -218,10 +219,19 @@ at most 1.8 s with 256 shares. The packed weights take 13,000 and 11,140 bytes.
 NEB inherits the model of a hash proof of work: the security of the chain comes from the ticket lottery and the
 cumulative work of the best chain, under an honest majority of the hash rate. Its specific assumption concerns the attempt.
 
-**Assumption A (no shortcut).** Model BLAKE3 as a random oracle. Computing the digest of an attempt for a given nonce and
-model needs a forward and a backward pass, with no strategy that costs much less.
+**Assumption A (no shortcut).** Model BLAKE3 as a random oracle. The ticket of an attempt for a given nonce and model
+needs the clipped gradient of its 16 samples on that model: no strategy finds a ticket below a target without the digest
+of that gradient.
 
-Under Assumption A an adversary that makes `q` evaluations finds a ticket below a target `tau` with probability at most
+Assumption A is about the ticket. It does not bound the cost of the gradient, which is lower than one training step per
+attempt. The gradient of an attempt is the sum of the gradients of its samples, and the gradient of a sample depends only
+on the model and on that sample. A miner can evaluate every sample of the dataset once for each model state and keep the
+results in a table; an attempt then reads 16 rows, adds them, clips the sum and hashes the digest. The tickets match the
+reference, and the table engine in `docs/mining.md` works this way. A miner pays the forward and backward passes once per
+sample and per model state, so the dataset size bounds the training computation of a miner in a round. The rest of the
+mining work is memory reads, additions and hashes.
+
+Under Assumption A an adversary that computes `q` tickets finds one below a target `tau` with probability at most
 `q * tau / 2^256`, as in a hash proof of work, and the chance that an attempt wins is the same for every miner whatever data
 it works on. Assumption A plays the role that the absence of shortcuts in the hash function plays for Bitcoin. It is an
 assumption, stated here so that it can be examined: no proof excludes a cheaper way to obtain the digest, and no review
@@ -368,8 +378,9 @@ The node evaluates tickets with the C reference only. The miners may use optimis
 tensor-core kernels on NVIDIA GPUs) that compute the same tickets faster; they are off by default, self-tested against the
 reference, and every nonce they report is evaluated again with the reference before it is sent (`docs/mining.md`). On the
 measured processor the sparse AVX-512 engine is 30 to 46 times faster than the reference built with MSVC, on all threads.
-For the convolutional networks the CPU miner runs the reference code, and the GPU miner has a CUDA kernel that is
-self-tested against the reference at start.
+For the convolutional networks the CPU miner runs the reference code or the table engine of section 6.1, which evaluates
+every sample of the dataset once for each model state and builds an attempt from 16 rows of that table. The GPU miner has
+a CUDA kernel that is self-tested against the reference at start.
 
 The implementation is checked bit for bit: the model step of the node agrees with an independent 64-bit step on all
 77,312,098,320 entries of the domain of the consensus, the AVX-512 engines agree with the reference on 1,673,728
@@ -393,8 +404,10 @@ Parameters and operation are in `docs/mainnet.md`, and those of the test network
 ## 9. Assumptions and scope
 
 1. **Assumption A.** Like every proof of work, NEB rests on an assumption about its work: no strategy produces a winning
-   ticket for less than an evaluation of the attempt. What supports it today is the construction (the ticket hashes a
-   digest of every entry of the gradient) and the checks of section 8. It has no proof and no external review.
+   ticket without the gradient of the attempt. What supports it today is the construction (the ticket hashes a digest of
+   every entry of the gradient) and the checks of section 8. It has no proof and no external review. A table of
+   per-sample gradients, rebuilt for each model state, brings an attempt down to 16 row reads, a sum and a hash
+   (section 6.1).
 2. **Many steps.** Theorem 1 bounds one step, and section 6.4 measures fixed strategies over 300 steps. An adaptive
    adversary over many blocks, one that optimises the loss of the model with look-ahead, selfish mining and the economics
    of pools are not covered by a proof or a measurement.
@@ -405,10 +418,12 @@ Parameters and operation are in `docs/mainnet.md`, and those of the test network
    new chain, and a node accepts none deeper than 60 blocks. The effect of orphaned blocks on learning was not measured
    apart from the curves of section 7.5.
 5. **Usefulness.** The models are small classifiers on public data, and their usefulness depends on that choice. The
-   security of the chain and the reward do not depend on it. A slot moves to another dataset or a larger network at a
-   height fixed in the network parameters (section 3.1), with update constants tuned for it.
-6. **Hardware.** NEB does not claim ASIC resistance: an attempt is millions of small integer multiply-accumulates and one
-   hash, and dedicated hardware may beat a GPU. Energy use and the economic value of the coins were not measured.
+   security of the chain and the reward do not depend on it. The dataset size bounds the training computation of a miner in
+   a round (section 6.1), and hash rate beyond that adds lottery work and no training. A slot moves to another dataset
+   or a larger network at a height fixed in the network parameters (section 3.1), with update constants tuned for it.
+6. **Hardware.** NEB does not claim ASIC resistance: computed directly, an attempt is millions of small integer
+   multiply-accumulates and one hash; from a table it is memory reads, additions and one hash. Dedicated hardware may beat
+   a GPU at either. Energy use and the economic value of the coins were not measured.
 
 ## 10. Conclusion
 

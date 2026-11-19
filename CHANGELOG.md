@@ -9,6 +9,9 @@ the software version: a node checks them, not the software version.
 - JSON-RPC: `getutxos` returns the unspent outputs of one lock on the best chain, so a wallet reads its balance and
   builds a payment without reading the chain block by block. A lock with more than 20,000 unspent outputs is an
   error. The consensus rules, the protocol version and the genesis are unchanged.
+- Whitepaper: Assumption A (section 6.1) is stated on the ticket, and the section describes the table of per-sample
+  gradients that brings an attempt down to 16 row reads, a sum and a hash. Sections 3, 8 and 9 are updated to match.
+  No rule changes.
 
 ## [1.0.1] - 2026-11-17
 

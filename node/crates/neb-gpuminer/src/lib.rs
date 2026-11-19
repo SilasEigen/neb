@@ -10,7 +10,9 @@
 //! later), which the caller asks for by name. Like the AVX-512 engine of the CPU miner they are used only after a
 //! self-test against the reference ([`check_scanner`]); the worker checks the model it uploads and audits single
 //! nonces during the run ([`probe_ticket`]), and on any disagreement it replaces the kernel by K0
-//! ([`spawn_worker_with_fallback`]). A scan never returns a partial result: a range with more hits than the device
+//! ([`spawn_worker_with_fallback`]). The convolutional networks have a kernel that runs the forward and backward
+//! passes of every attempt, the default, and the table kernel (`table`), which evaluates every sample of the dataset
+//! once for each model and builds an attempt from 16 rows; on a disagreement it gives way to the default one. A scan never returns a partial result: a range with more hits than the device
 //! can report is split ([`scan_complete`]).
 
 use std::sync::Arc;
@@ -30,6 +32,9 @@ pub enum GpuKernel {
     K1,
     /// Tensor cores, skipping the zero entries.
     K2,
+    /// The table of per-sample gradients for the convolutional networks (`pow/gpu/nebhash2_table_cuda.cu`). The
+    /// one-hidden-layer network has no table kernel and runs K0 when this one is asked for.
+    Table,
 }
 
 impl GpuKernel {
@@ -38,7 +43,8 @@ impl GpuKernel {
             "k0" | "K0" => Ok(GpuKernel::K0),
             "k1" | "K1" => Ok(GpuKernel::K1),
             "k2" | "K2" => Ok(GpuKernel::K2),
-            _ => Err(format!("unknown kernel {s:?}: expected k0, k1 or k2")),
+            "table" => Ok(GpuKernel::Table),
+            _ => Err(format!("unknown kernel {s:?}: expected k0, k1, k2 or table")),
         }
     }
 
@@ -47,6 +53,7 @@ impl GpuKernel {
             GpuKernel::K0 => "K0",
             GpuKernel::K1 => "K1",
             GpuKernel::K2 => "K2",
+            GpuKernel::Table => "table",
         }
     }
 
@@ -537,6 +544,7 @@ mod tests {
         assert_eq!(GpuKernel::parse("k2"), Ok(GpuKernel::K2));
         assert_eq!(GpuKernel::parse("K0"), Ok(GpuKernel::K0));
         assert!(GpuKernel::parse("k3").is_err());
+        assert_eq!(GpuKernel::parse("table"), Ok(GpuKernel::Table));
         assert_eq!((GpuKernel::K0.code(), GpuKernel::K1.code(), GpuKernel::K2.code()), (0, 1, 2));
     }
 }

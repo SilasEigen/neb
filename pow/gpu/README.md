@@ -5,6 +5,8 @@
 | `shares_cuda.cu`, `shares_cuda.h` | K0: the dp4a kernel, the default of the GPU miner. |
 | `shares_tc.cu`, `shares_tc.h`, `tc_common.cuh` | K1 (dense) and K2 (sparse): one training share per thread block with int8 tensor-core instructions (`mma`). K2 skips the hidden units whose propagated error is zero. |
 | `scan_cuda.cu`, `scan_cuda.h` | The nonce scan of the GPU miner: header mode, bound test, hit list, and the choice of the kernel. |
+| `nebhash2_cuda.cu`, `nebhash2_cuda.h` | The convolutional networks of `spec/nebhash-v2.md`: the forward and backward passes of every attempt, one thread block per attempt. The default for these networks. |
+| `nebhash2_table_cuda.cu`, `nebhash2_table_cuda.h` | The same networks from a table of per-sample gradients (`--gpu-kernel table`): the host evaluates every sample once for each model with `neb2_sample_grad`, and an attempt reads 16 rows, adds them, clips and hashes. Off by default. |
 
 Every kernel gives the digest, the ticket, the 16 sample indices and the clipped gradients of `pow/ref/shares.c`, bit for bit.
 The kernels are mining optimisations, not consensus: the node never uses them, and the miner evaluates every nonce that a

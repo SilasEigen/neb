@@ -1,5 +1,5 @@
-//! `neb-miner-gpu --node HOST:PORT (--dataset FILE | --synthetic) [--devices LIST] [--gpu-kernel k0|k1|k2] [--plain] [--stats FILE]`
-//! and `neb-miner-gpu --selftest [--gpu-kernel k0|k1|k2] [--dataset FILE | --synthetic]`
+//! `neb-miner-gpu --node HOST:PORT (--dataset FILE | --synthetic) [--devices LIST] [--gpu-kernel k0|k1|k2|table] [--plain] [--stats FILE]`
+//! and `neb-miner-gpu --selftest [--gpu-kernel k0|k1|k2|table] [--dataset FILE | --synthetic]`
 //!
 //! GPU miner of the work service (spec/node.md section 7.1). `--devices` is a comma-separated list of CUDA device
 //! indexes (default: all). Shows the dashboard in a terminal; with `--plain`, or when the output is not a terminal,
@@ -11,7 +11,9 @@
 //! capability 8.0 or later. A tensor-core kernel is used on a device only if the device supports it and passes the
 //! self-test against the C reference; otherwise the miner says why and uses K0 on that device. The reference checks every
 //! nonce before it is sent, the model of each job is checked on a few nonces, one batch in 64 is audited, and on any
-//! disagreement the device goes back to K0. `--selftest` runs the self-test of the requested kernel on each device
+//! disagreement the device goes back to K0. `table` is for the convolutional networks: the miner evaluates every
+//! sample of the dataset once for each model and a device builds an attempt from 16 rows of that table; a device that
+//! fails its self-test or disagrees with the reference runs the default kernel of these networks. `--selftest` runs the self-test of the requested kernel on each device
 //! (default: K0, K1 and K2, skipping the ones a device does not support) on the given dataset (default: the synthetic one).
 //! Exit code: 0 for a passed self test or after `q`, 1 when a device fails, the node closes the connection or
 //! cannot be reached, 2 on a usage error.
@@ -32,13 +34,15 @@ const MAX_HITS: u32 = 4096;
 /// Nonces per scan of the v2 kernels: an attempt costs tens to hundreds of times a v1 attempt, so a smaller batch keeps
 /// the time to take a new job at a few seconds.
 const BATCH_V2: u32 = 1 << 14;
+/// Nonces per scan of the table kernel, whose attempts are a few hundred times cheaper than those of the v2 kernel.
+const BATCH_TABLE: u32 = 1 << 19;
 
 fn usage() -> i32 {
     eprintln!(
-        "usage: neb-miner-gpu --node HOST:PORT (--dataset FILE | --synthetic) [--devices 0,1,...] [--gpu-kernel k0|k1|k2] [--plain] [--stats FILE]"
+        "usage: neb-miner-gpu --node HOST:PORT (--dataset FILE | --synthetic) [--devices 0,1,...] [--gpu-kernel k0|k1|k2|table] [--plain] [--stats FILE]"
     );
     eprintln!(
-        "       neb-miner-gpu --selftest [--gpu-kernel k0|k1|k2] [--dataset FILE | --synthetic] [--devices 0,1,...]"
+        "       neb-miner-gpu --selftest [--gpu-kernel k0|k1|k2|table] [--dataset FILE | --synthetic] [--devices 0,1,...]"
     );
     2
 }
@@ -112,9 +116,11 @@ fn open_all(
         .collect()
 }
 
-/// The v2 kernel on every device for a dataset of a v2 architecture (spec/nebhash-v2.md), after its self-test. There
-/// is no other kernel to fall back to: the CPU check of every reported nonce stays.
-fn open_all_v2(devices: &[usize], dataset: &dyn Dataset) -> Result<Vec<DeviceSetup>, String> {
+/// The v2 kernel on every device for a dataset of a v2 architecture (spec/nebhash-v2.md), after its self-test. With
+/// `table`, a device that passes the self-test of the table kernel runs it and falls back to the v2 kernel on a
+/// disagreement; a device that fails it runs the v2 kernel. The CPU check of every reported nonce stays.
+fn open_all_v2(devices: &[usize], shared: &SharedDataset, table: bool) -> Result<Vec<DeviceSetup>, String> {
+    let dataset: &dyn Dataset = &**shared;
     devices
         .iter()
         .map(|&d| {
@@ -124,6 +130,25 @@ fn open_all_v2(devices: &[usize], dataset: &dyn Dataset) -> Result<Vec<DeviceSet
             })?;
             eprintln!("neb-miner-gpu: device {d} ({name}): {} self-test passed: {summary}", dataset.arch().name());
             let model = Model::from_seed_arch(dataset.arch(), &[0u8; 32]);
+            if table {
+                match cuda::kernel2_table_selftest(d, dataset) {
+                    Ok(summary) => {
+                        eprintln!("neb-miner-gpu: device {d} ({name}): table self-test passed: {summary}");
+                        let scanner = Cuda2Scanner::open_table(d, dataset, &model, BATCH_TABLE, MAX_HITS)?;
+                        let shared = shared.clone();
+                        let fallback: Fallback = Box::new(move || {
+                            let model = Model::from_seed_arch(shared.arch(), &[0u8; 32]);
+                            Cuda2Scanner::open(d, &*shared, &model, BATCH_V2, MAX_HITS)
+                                .map(|s| Box::new(s) as Box<dyn Scanner>)
+                        });
+                        return Ok((Box::new(scanner) as Box<dyn Scanner>, Some(fallback), GpuKernel::Table));
+                    }
+                    Err(e) => eprintln!(
+                        "neb-miner-gpu: device {d} ({name}): table self-test FAILED: {e}; using the {} kernel",
+                        dataset.arch().name()
+                    ),
+                }
+            }
             let scanner = Cuda2Scanner::open(d, dataset, &model, BATCH_V2, MAX_HITS)?;
             Ok((Box::new(scanner) as Box<dyn Scanner>, None, GpuKernel::K0))
         })
@@ -214,9 +239,11 @@ fn run(args: &[String]) -> i32 {
     let mut per_dataset = Vec::with_capacity(datasets.len());
     for d in &datasets {
         let setups = if d.arch() == Arch::V1 {
-            open_all(&devices, &**d, requested.unwrap_or(GpuKernel::K0), &Model::from_seed(&[0u8; 32]))
+            // the table kernel is for the convolutional networks: the one-hidden-layer network runs K0 instead
+            let kernel = requested.filter(|&k| k != GpuKernel::Table).unwrap_or(GpuKernel::K0);
+            open_all(&devices, &**d, kernel, &Model::from_seed(&[0u8; 32]))
         } else {
-            open_all_v2(&devices, &**d)
+            open_all_v2(&devices, d, requested == Some(GpuKernel::Table))
         };
         match setups {
             Ok(s) => per_dataset.push(s),
@@ -318,18 +345,29 @@ fn self_test(devices: &[usize], requested: Option<GpuKernel>, dataset: &dyn Data
         let mut failed = false;
         for &device in devices {
             let name = cuda::device_name(device).unwrap_or_default();
-            match cuda::kernel2_selftest(device, dataset) {
-                Ok(summary) => println!("device {device} {name}: {}: {summary}: PASSED", dataset.arch().name()),
-                Err(e) => {
-                    println!("device {device} {name}: {}: DIFFERENT from the C reference: {e}", dataset.arch().name());
-                    failed = true;
+            // both kernels of the convolutional networks, or the table kernel alone when it is the one asked for
+            let both = [(false, dataset.arch().name()), (true, "table")];
+            for (table, kernel) in both.into_iter().filter(|k| k.0 || requested != Some(GpuKernel::Table)) {
+                let result = if table {
+                    cuda::kernel2_table_selftest(device, dataset)
+                } else {
+                    cuda::kernel2_selftest(device, dataset)
+                };
+                match result {
+                    Ok(summary) => println!("device {device} {name}: {kernel}: {summary}: PASSED"),
+                    Err(e) => {
+                        println!("device {device} {name}: {kernel}: DIFFERENT from the C reference: {e}");
+                        failed = true;
+                    }
                 }
             }
         }
         println!("{}", if failed { "SELFTEST FAILED" } else { "SELFTEST PASSED" });
         return i32::from(failed);
     }
-    let kernels = requested.map_or(vec![GpuKernel::K0, GpuKernel::K1, GpuKernel::K2], |k| vec![k]);
+    let kernels = requested
+        .filter(|&k| k != GpuKernel::Table)
+        .map_or(vec![GpuKernel::K0, GpuKernel::K1, GpuKernel::K2], |k| vec![k]);
     let mut failed = false;
     for &device in devices {
         let name = cuda::device_name(device).unwrap_or_default();

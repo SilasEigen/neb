@@ -38,7 +38,9 @@ fn main() {
         }
         b
     };
-    for h in ["scan_cuda.h", "shares_cuda.h", "shares_tc.h", "tc_common.cuh", "nebhash2_cuda.h"] {
+    for h in
+        ["scan_cuda.h", "shares_cuda.h", "shares_tc.h", "tc_common.cuh", "nebhash2_cuda.h", "nebhash2_table_cuda.h"]
+    {
         println!("cargo:rerun-if-changed={}", gpu.join(h).display());
     }
     println!("cargo:rerun-if-changed={}", refdir.join("shares.h").display());
@@ -48,6 +50,8 @@ fn main() {
     // nebhash v2 (spec/nebhash-v2.md): its own library; the architecture table comes from pow/ref/nebhash2.c, which
     // neb-pow compiles in.
     build(&["nebhash2_cuda.cu"]).compile("neb_gpu2");
+    // The table kernel of nebhash v2, in its own library like the others.
+    build(&["nebhash2_table_cuda.cu"]).compile("neb_gpu2t");
     if let Some(cuda) = std::env::var_os("CUDA_PATH") {
         let lib = if cfg!(windows) { "lib/x64" } else { "lib64" };
         println!("cargo:rustc-link-search=native={}", Path::new(&cuda).join(lib).display());

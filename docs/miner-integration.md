@@ -58,6 +58,7 @@ What matters for a miner:
 | `pow/ref/shares.c`, `blake3_min.c`, `chacha8.c` | C reference of the attempt and the step; every engine is checked against it |
 | `pow/gpu/shares_cuda.cu`, `scan_cuda.cu` | CUDA kernel K0: dp4a, the default kernel |
 | `pow/gpu/shares_tc.cu`, `tc_common.cuh` | CUDA kernels K1 and K2: integer tensor cores, Ampere and later |
+| `pow/gpu/nebhash2_table_cuda.cu` | CUDA kernel of the convolutional networks from a table of per-sample gradients |
 | `pow/cpu/shares_avx512.c` | AVX-512 engine for CPUs |
 | `node/crates/neb-gpuminer` | Rust host of the GPU miner: work service, job handling, kernel fallback |
 | `pow/oracle/shares_oracle.py` | Python oracle written from the spec alone |

@@ -380,7 +380,8 @@ reference, and every nonce they report is evaluated again with the reference bef
 measured processor the sparse AVX-512 engine is 30 to 46 times faster than the reference built with MSVC, on all threads.
 For the convolutional networks the CPU miner runs the reference code or the table engine of section 6.1, which evaluates
 every sample of the dataset once for each model state and builds an attempt from 16 rows of that table. The GPU miner has
-a CUDA kernel that is self-tested against the reference at start.
+a CUDA kernel that runs the passes of every attempt and one that reads the same table, both self-tested against the
+reference at start.
 
 The implementation is checked bit for bit: the model step of the node agrees with an independent 64-bit step on all
 77,312,098,320 entries of the domain of the consensus, the AVX-512 engines agree with the reference on 1,673,728

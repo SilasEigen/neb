@@ -9,13 +9,14 @@ validates every block and share with the C reference, and CI checks that `neb-no
 |---|---|---|---|
 | node (`neb-node`) | the C reference (`neb-pow`) | none | the reference |
 | CPU miner (`neb-miner-cpu`) | the C reference | the table of per-sample gradients for the convolutional networks (crate `neb-engines`): `--engine table`; AVX-512 VNNI, dense and sparse, for the one-hidden-layer network (`pow/cpu`): `--engine avx512` or `avx512-dense` | the reference |
-| GPU miner (`neb-miner-gpu`) | the dp4a kernel K0 (`pow/gpu/shares_cuda.cu`) | the tensor-core kernels K1 and K2 (`pow/gpu/shares_tc.cu`): `--gpu-kernel k1` or `k2` | K0 |
+| GPU miner (`neb-miner-gpu`) | the dp4a kernel K0 (`pow/gpu/shares_cuda.cu`) | the tensor-core kernels K1 and K2 (`pow/gpu/shares_tc.cu`): `--gpu-kernel k1` or `k2`; the table of per-sample gradients for the convolutional networks (`pow/gpu/nebhash2_table_cuda.cu`): `--gpu-kernel table` | K0, and for the convolutional networks the kernel of `pow/gpu/nebhash2_cuda.cu` |
 
 The AVX-512 engines and the kernels K1 and K2 compute the one-hidden-layer network, which only the test network used,
 before its block 8800. The main network has the convolutional networks of `spec/nebhash-v2.md` from its first block:
 the CPU miner runs them with the reference code or, with `--engine table`, from a table of the gradient of every
 sample of the dataset, built again for each model state (`docs/testnet.md`, "Running the CPU miner"); the GPU miner
-runs them with a CUDA kernel that is self-tested against the reference at start. In an attempt of the reference the
+runs them with a CUDA kernel that is self-tested against the reference at start or, with `--gpu-kernel table`, from
+the same table, built on the host for each model state and read on the device. In an attempt of the reference the
 cost is the forward and backward passes of 16 samples; in an attempt of the table it is 16 rows read and added, so
 the attempt rates of the two differ by a large factor on the same machine.
 
@@ -26,6 +27,7 @@ the attempt rates of the two differ by a large factor on the same machine.
 | AVX-512 (CPU) | x86-64 with AVX-512 F, BW, VL, DQ and VNNI, and a C compiler that accepts them (gcc, clang or MSVC) | the reference is used, with a message |
 | K0 (GPU) | NVIDIA GPU of compute capability 7.5 or later, CUDA 13 toolkit to build, driver 580 or later | the GPU miner is not built or does not start |
 | K1, K2 (GPU) | compute capability 8.0 or later (int8 `mma.sync`) | K0 is used on that device, with a message |
+| table (GPU) | the devices of K0, and device memory for the table (about 50 MB for 13,404 transit signals) | the kernel of `nebhash2_cuda.cu` is used on that device, with a message |
 
 ## Safeguards
 
@@ -51,6 +53,8 @@ probability for a systematic fault. Enable an engine on new hardware only after 
 node/target/release/neb-miner-cpu --synthetic --engine avx512 --selftest             # exit code 0 when the engine passes
 node/target/release/neb-miner-gpu --selftest                                          # K0, and K1 and K2 where supported
 node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../neb-datasets.bin --gpu-kernel k2
+node/target/release/neb-miner-gpu --selftest --dataset ../neb-datasets.bin           # both kernels of the convolutional networks
+node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../neb-datasets.bin --gpu-kernel table
 ```
 
 ## Numerical range

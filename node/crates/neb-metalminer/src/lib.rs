@@ -1,16 +1,22 @@
 //! Metal (Apple GPU) miner of the NEB testnet.
 //!
-//! The attempt of `spec/shares.md` sections 5.1 to 5.4 is evaluated by the kernel `src/neb_share.metal`, compiled from
-//! source when the miner starts (no Xcode and no offline `metal` compiler is needed). One threadgroup of 256 threads
-//! evaluates one nonce; the layout follows the dp4a kernel of `pow/gpu/shares_cuda.cu`.
+//! The attempt of `spec/shares.md` sections 5.1 to 5.4 is evaluated by the kernel `src/neb_share.metal`, and the attempt
+//! of `spec/nebhash-v2.md` section 4 (KEP1 and RET2) by `src/neb_share2.metal`; both are compiled from source when the
+//! miner starts (no Xcode and no offline `metal` compiler is needed), after the shared hash code of
+//! `src/neb_common.metal`. One threadgroup of 256 threads evaluates one nonce; the layout follows the dp4a kernel of
+//! `pow/gpu/shares_cuda.cu` for the 784-128-10 network and `pow/gpu/nebhash2_cuda.cu` for the v2 architectures, whose
+//! layer table is the one of the C reference (`neb2_arch_get`).
 //!
 //! Under the rules of `neb-engines` the GPU is an optimisation, never the authority: every attempt that the GPU
 //! reports as a share or a solution is evaluated again by the C reference (`neb-pow`, `neb_share_eval`) before it is
 //! sent to the node, and a disagreement is counted and dropped. `neb-miner-metal --selftest` compares digests,
 //! tickets and sample indices with the reference over several models.
 
-/// The Metal source, compiled by the device at start.
-pub const KERNEL_SOURCE: &str = include_str!("neb_share.metal");
+/// The Metal source of the 784-128-10 attempt, compiled by the device at start.
+pub const KERNEL_SOURCE: &str = concat!(include_str!("neb_common.metal"), "\n", include_str!("neb_share.metal"));
+
+/// The Metal source of the nebhash v2 attempt (KEP1 and RET2).
+pub const KERNEL_SOURCE2: &str = concat!(include_str!("neb_common.metal"), "\n", include_str!("neb_share2.metal"));
 
 /// Words of one result record: digest (8), ticket (8), sample indices (16).
 pub const RECORD_WORDS: usize = 8 + 8 + 16;
@@ -52,27 +58,78 @@ struct NebMetal {
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use std::ffi::{CStr, c_char, c_void};
+    use std::ffi::{CStr, c_char, c_int, c_void};
     use std::io;
     use std::sync::atomic::Ordering;
     use std::thread;
     use std::time::{Duration, Instant};
 
     use neb_cpuminer::{MinerHandle, Session, start_with};
-    use neb_pow::shares::{Arch, Dataset, Model, NIN, ShareBuffers, SharedDataset};
+    use neb_pow::shares::{Arch, Dataset, Model, NB, ShareBuffers, SharedDataset};
 
-    use super::{KERNEL_SOURCE, NebMetal, Record};
+    use super::{KERNEL_SOURCE, KERNEL_SOURCE2, NebMetal, Record};
+
+    /// Mirror of `neb2_layer` in `pow/ref/nebhash2.h`: nineteen ints.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct CLayer {
+        kind: i32,
+        cin: i32,
+        cout: i32,
+        k: i32,
+        stride: i32,
+        pad: i32,
+        pool: i32,
+        s: i32,
+        sb: i32,
+        su: i32,
+        in_len: i32,
+        in_off: i32,
+        nsrc: i32,
+        src: [i32; 2],
+        conv_len: i32,
+        out_len: i32,
+        nw: i32,
+        w_off: i32,
+    }
+
+    /// Mirror of `neb2_arch` in `pow/ref/nebhash2.h`.
+    #[repr(C)]
+    struct CArch {
+        id: i32,
+        nin: i32,
+        nlayers: i32,
+        nweights: i32,
+        l: [CLayer; MAX_LAYERS],
+    }
+
+    const _: () = assert!(std::mem::size_of::<CLayer>() == 19 * 4);
+    const _: () = assert!(std::mem::size_of::<CArch>() == (4 + MAX_LAYERS * 19) * 4);
+
+    /// `NEB2_MAX_LAYERS`.
+    const MAX_LAYERS: usize = 6;
+    /// Ints of a layer in the plan of `neb_share2.metal` (`struct Layer`), and of its header (`struct Plan`).
+    const PLAN_LAYER_INTS: usize = 27;
+    const PLAN_HEADER_INTS: usize = 8;
 
     unsafe extern "C" {
+        /// The layer table of the C reference, the one the node runs: the kernel reads it, not a copy of it.
+        fn neb2_arch_get(id: c_int) -> *const CArch;
         fn neb_metal_new(
             source: *const c_char,
             pixels: *const c_void,
             labels: *const c_void,
             n: u32,
             max_batch: u32,
+            nin: u32,
+            plan: *const c_void,
+            plan_bytes: usize,
+            nweights: u32,
+            block_bytes: u32,
             err: *mut c_char,
             errcap: usize,
         ) -> *mut NebMetal;
+        fn neb_metal_set_weights(g: *mut NebMetal, w: *const i8, err: *mut c_char, errcap: usize) -> bool;
         fn neb_metal_free(g: *mut NebMetal);
         fn neb_metal_name(g: *mut NebMetal) -> *const c_char;
         fn neb_metal_set_model(g: *mut NebMetal, w1: *const i8, w2: *const i8, err: *mut c_char, errcap: usize)
@@ -94,32 +151,75 @@ mod imp {
         unsafe { CStr::from_ptr(buf.as_ptr()) }.to_string_lossy().into_owned()
     }
 
+    /// The plan of `neb_share2.metal` for a v2 architecture: the layer table of the C reference, the sizes derived from
+    /// it and the layout of the scratch area (per sample: the input and the routed error of every layer; common to the
+    /// samples: the activations, the pooled outputs and their errors), as in `make_plan` of `pow/gpu/nebhash2_cuda.cu`.
+    /// Returns the ints of the plan, the number of weights and the scratch bytes of one attempt.
+    fn v2_plan(arch: Arch) -> Result<(Vec<i32>, u32, u32), String> {
+        let id = arch.id().ok_or("not a nebhash v2 architecture")? as c_int;
+        // SAFETY: the C reference returns a pointer to a static table, or NULL for an unknown id.
+        let table = unsafe { neb2_arch_get(id).as_ref() }.ok_or("the C reference has no such architecture")?;
+        let up16 = |v: i32| (v + 15) & !15;
+        let nl = table.nlayers as usize;
+        let (mut at, mut common) = (0i32, 0i32);
+        let mut layers = Vec::with_capacity(nl * PLAN_LAYER_INTS);
+        for l in &table.l[..nl] {
+            let sq = |n: i32| if l.kind == 2 { n * n } else { n };
+            let nin_in = if l.kind == 3 { l.cin } else { l.cin * sq(l.in_len) };
+            let nconv = l.cout * sq(l.conv_len);
+            let nout = l.cout * sq(l.out_len);
+            let (off_in, off_d) = (at, at + up16(nin_in));
+            at = off_d + up16(nconv);
+            let off_a = common;
+            let off_out = off_a + up16(nconv);
+            let off_e = off_out + up16(nout);
+            common = off_e + up16(nout);
+            layers.extend_from_slice(&[
+                l.kind, l.cin, l.cout, l.k, l.stride, l.pad, l.pool, l.s, l.sb, l.su, l.in_len, l.in_off, l.nsrc,
+                l.src[0], l.src[1], l.conv_len, l.out_len, l.nw, l.w_off, nin_in, nconv, nout, off_in, off_d, off_a,
+                off_out, off_e,
+            ]);
+        }
+        let block_bytes = (NB as i32 * at + common + 255) & !255;
+        let mut plan = vec![0i32; PLAN_HEADER_INTS + MAX_LAYERS * PLAN_LAYER_INTS];
+        plan[..6].copy_from_slice(&[table.nlayers, table.nweights, table.nin, at, common, block_bytes]);
+        plan[PLAN_HEADER_INTS..PLAN_HEADER_INTS + layers.len()].copy_from_slice(&layers);
+        Ok((plan, table.nweights as u32, block_bytes as u32))
+    }
+
     /// The Apple GPU with the dataset of the network.
     pub struct MetalEngine {
         g: *mut NebMetal,
         max_batch: u32,
         name: String,
+        arch: Arch,
     }
 
     // SAFETY: the handle owns the device and its buffers, and every call is made from the thread that holds it.
     unsafe impl Send for MetalEngine {}
 
     impl MetalEngine {
-        /// Uploads `dataset` (every sample, once) and compiles the kernel. `max_batch` is the largest batch of nonces of
-        /// one dispatch; 2048 is about 25 ms of work on an M4 Pro.
+        /// Uploads `dataset` (every sample, once) and compiles the kernel of its architecture. `max_batch` is the largest
+        /// batch of nonces of one scan; 2048 is about 25 ms of work on an M4 Pro for the 784-128-10 network.
         pub fn new(dataset: &dyn Dataset, max_batch: u32) -> Result<MetalEngine, String> {
             let n = dataset.n();
             if n == 0 {
                 return Err("the dataset is empty".into());
             }
-            let mut pixels = vec![0u8; n as usize * NIN];
+            let arch = dataset.arch();
+            let nin = arch.nin();
+            let mut pixels = vec![0u8; n as usize * nin];
             let mut labels = vec![0u8; n as usize];
             for i in 0..n {
-                let (x, label) = dataset.get(i);
-                pixels[i as usize * NIN..][..NIN].copy_from_slice(&x);
-                labels[i as usize] = label;
+                labels[i as usize] = dataset.sample(i, &mut pixels[i as usize * nin..][..nin]);
             }
-            let source = std::ffi::CString::new(KERNEL_SOURCE).map_err(|e| e.to_string())?;
+            let (plan, nweights, block_bytes, source) = if arch == Arch::V1 {
+                (Vec::new(), 0, 0, KERNEL_SOURCE)
+            } else {
+                let (plan, nweights, block_bytes) = v2_plan(arch)?;
+                (plan, nweights, block_bytes, KERNEL_SOURCE2)
+            };
+            let source = std::ffi::CString::new(source).map_err(|e| e.to_string())?;
             let mut err = [0 as c_char; 4096];
             // SAFETY: the buffers outlive the call, and the device copies what it needs before it returns.
             let g = unsafe {
@@ -129,6 +229,11 @@ mod imp {
                     labels.as_ptr().cast::<c_void>(),
                     n,
                     max_batch.max(1),
+                    nin as u32,
+                    if plan.is_empty() { std::ptr::null() } else { plan.as_ptr().cast::<c_void>() },
+                    plan.len() * 4,
+                    nweights,
+                    block_bytes,
                     err.as_mut_ptr(),
                     err.len(),
                 )
@@ -138,7 +243,7 @@ mod imp {
             }
             // SAFETY: `g` is a live handle.
             let name = unsafe { CStr::from_ptr(neb_metal_name(g)) }.to_string_lossy().into_owned();
-            Ok(MetalEngine { g, max_batch: max_batch.max(1), name })
+            Ok(MetalEngine { g, max_batch: max_batch.max(1), name, arch })
         }
 
         /// The name of the device, such as "Apple M4 Pro".
@@ -150,9 +255,18 @@ mod imp {
             self.max_batch
         }
 
-        /// The weights of the job that the batch is mined on.
+        /// The weights of the job that the batch is mined on. The model must be of the architecture of the dataset.
         pub fn set_model(&mut self, model: &Model) -> Result<(), String> {
+            if model.arch() != self.arch {
+                return Err(format!("a {} model on a {} engine", model.arch().name(), self.arch.name()));
+            }
             let mut err = [0 as c_char; 4096];
+            if self.arch != Arch::V1 {
+                // SAFETY: a v2 model has `arch.weights()` weights, the count the engine was built for.
+                let ok =
+                    unsafe { neb_metal_set_weights(self.g, model.weights().as_ptr(), err.as_mut_ptr(), err.len()) };
+                return if ok { Ok(()) } else { Err(error_text(&err)) };
+            }
             // SAFETY: `w1` and `w2` have N1 and N2 entries, the sizes the C code reads.
             let ok = unsafe {
                 neb_metal_set_model(self.g, model.w1().as_ptr(), model.w2().as_ptr(), err.as_mut_ptr(), err.len())
@@ -241,14 +355,11 @@ mod imp {
     /// The worker loop: one engine per model slot, the model of the current job, batches of nonces, the reference on
     /// every hit.
     pub fn run(session: &Session, datasets: &[SharedDataset], batch: u32) -> Result<MiningSummary, String> {
-        // One engine per slot, in slot order: a job of a slot without an engine waits for the next job. The kernel is the
-        // 784-128-10 attempt of spec/shares.md, so a slot of another architecture (nebhash v2) gets no engine.
+        // One engine per slot, in slot order, each with the kernel of its dataset's architecture (the 784-128-10
+        // attempt of spec/shares.md or one of nebhash v2). A job of a slot without an engine waits for the next job.
         let mut engines: Vec<Option<MetalEngine>> = Vec::with_capacity(datasets.len());
         for d in datasets {
-            match d.arch() {
-                Arch::V1 => engines.push(Some(MetalEngine::new(&**d, batch)?)),
-                _ => engines.push(None),
-            }
+            engines.push(Some(MetalEngine::new(&**d, batch)?));
         }
         let mut models: Vec<Option<[u8; 32]>> = vec![None; engines.len()];
         let mut buffers = ShareBuffers::new();
@@ -263,8 +374,7 @@ mod imp {
             // A slot this miner has no dataset for cannot be mined, and neither can a model of another network than the
             // dataset's (an old dataset file after an upgrade): wait for the next job.
             let slot = unit.slot as usize;
-            let fits = engines.get(slot).is_some_and(|e| e.is_some())
-                && datasets[slot].arch() == unit.model.arch();
+            let fits = engines.get(slot).is_some_and(|e| e.is_some()) && datasets[slot].arch() == unit.model.arch();
             let Some(Some(engine)) = engines.get_mut(slot).filter(|_| fits) else {
                 thread::sleep(Duration::from_millis(200));
                 continue;

@@ -4,6 +4,7 @@
 //! neb-miner-metal --node 127.0.0.1:3441 --dataset neb-datasets.bin
 //! neb-miner-metal --dataset neb-datasets.bin --selftest      # GPU against the C reference, every slot
 //! neb-miner-metal --dataset neb-datasets.bin --bench 20000   # attempts per second, slot 0
+//! neb-miner-metal --dataset neb-datasets.bin --bench 4000 --slot 3
 //! ```
 
 use std::path::PathBuf;
@@ -11,12 +12,12 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use neb_metalminer::MetalEngine;
-use neb_pow::shares::{Arch, Dataset, Model, SharedDataset, SyntheticDataset, load_datasets, share_eval};
+use neb_pow::shares::{Dataset, Model, SharedDataset, SyntheticDataset, load_datasets, share_eval};
 
 fn usage() -> String {
     "usage: neb-miner-metal --dataset FILE [--node HOST:PORT] [--batch N] [--name TEXT]\n\
      \x20      neb-miner-metal --dataset FILE --selftest [--seeds N] [--keys N]\n\
-     \x20      neb-miner-metal --dataset FILE --bench ATTEMPTS\n\
+     \x20      neb-miner-metal --dataset FILE --bench ATTEMPTS [--slot N]\n\
      \x20      --syn replaces --dataset with the synthetic test dataset of spec/shares.md section 9"
         .to_string()
 }
@@ -28,6 +29,7 @@ struct Args {
     name: String,
     selftest: bool,
     bench: Option<u32>,
+    slot: usize,
     seeds: u32,
     keys: u32,
     syn: bool,
@@ -41,6 +43,7 @@ fn parse() -> Result<Args, String> {
         name: "metal".into(),
         selftest: false,
         bench: None,
+        slot: 0,
         seeds: 4,
         keys: 32,
         syn: false,
@@ -55,6 +58,7 @@ fn parse() -> Result<Args, String> {
             "--name" => a.name = value("--name")?,
             "--selftest" => a.selftest = true,
             "--bench" => a.bench = Some(value("--bench")?.parse().map_err(|_| "--bench must be a number".to_string())?),
+            "--slot" => a.slot = value("--slot")?.parse().map_err(|_| "--slot must be a number".to_string())?,
             "--seeds" => a.seeds = value("--seeds")?.parse().map_err(|_| "--seeds must be a number".to_string())?,
             "--keys" => a.keys = value("--keys")?.parse().map_err(|_| "--keys must be a number".to_string())?,
             "--syn" => a.syn = true,
@@ -89,19 +93,9 @@ fn selftest(a: &Args, datasets: &[SharedDataset]) -> Result<(), String> {
 }
 
 fn self_test_slot(a: &Args, slot: usize, dataset: &Arc<dyn Dataset>) -> Result<(), String> {
-    if dataset.arch() != Arch::V1 {
-        // The kernel is the 784-128-10 attempt: a slot of another architecture is mined by another engine, if any.
-        println!("slot {slot}: {}, not the 784-128-10 kernel, skipped", dataset.arch().name());
-        return Ok(());
-    }
     let mut engine = MetalEngine::new(&**dataset, a.batch)?;
     println!("device: {}", engine.device_name());
-    println!(
-        "slot {slot}: {} samples, {} models x {} keys",
-        dataset.n(),
-        a.seeds,
-        a.keys
-    );
+    println!("slot {slot}: {}, {} samples, {} models x {} keys", dataset.arch().name(), dataset.n(), a.seeds, a.keys);
     let mut checked = 0usize;
     for seed in 0..a.seeds {
         let mut s = [0u8; 32];
@@ -140,11 +134,10 @@ fn self_test_slot(a: &Args, slot: usize, dataset: &Arc<dyn Dataset>) -> Result<(
 }
 
 fn bench(a: &Args, datasets: &[SharedDataset], total: u32) -> Result<(), String> {
-    let dataset = datasets.iter().find(|d| d.arch() == Arch::V1).ok_or("no 784-128-10 dataset to benchmark")?;
+    let dataset =
+        datasets.get(a.slot).ok_or_else(|| format!("no slot {} in a file of {} datasets", a.slot, datasets.len()))?;
     let mut engine = MetalEngine::new(&**dataset, a.batch)?;
-    if datasets.len() > 1 {
-        println!("slot 0 of {} (the benchmark runs one slot)", datasets.len());
-    }
+    println!("slot {} of {}: {}", a.slot, datasets.len(), dataset.arch().name());
     let model = Model::from_seed_arch(dataset.arch(), &[0u8; 32]);
     engine.set_model(&model)?;
     let mut header = [0u8; 80];

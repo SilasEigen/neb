@@ -10,7 +10,7 @@ validates every block and share with the C reference, and CI checks that `neb-no
 | node (`neb-node`) | the C reference (`neb-pow`) | none | the reference |
 | CPU miner (`neb-miner-cpu`) | the C reference | AVX-512 VNNI, dense and sparse (`pow/cpu`, crate `neb-engines`): `--engine avx512` or `avx512-dense` | the reference |
 | GPU miner (`neb-miner-gpu`) | the dp4a kernel K0 (`pow/gpu/shares_cuda.cu`) | the tensor-core kernels K1 and K2 (`pow/gpu/shares_tc.cu`): `--gpu-kernel k1` or `k2` | K0 |
-| GPU miner, Apple (`neb-miner-metal`) | the Metal kernel (`node/crates/neb-metalminer/src/neb_share.metal`), one threadgroup per attempt | none | the kernel |
+| GPU miner, Apple (`neb-miner-metal`) | the Metal kernels (`node/crates/neb-metalminer/src/neb_share.metal` and `neb_share2.metal` for nebhash v2), one threadgroup per attempt | none | the kernel |
 
 ## Requirements
 
@@ -45,7 +45,7 @@ probability for a systematic fault. Enable an engine on new hardware only after 
 node/target/release/neb-miner-cpu --synthetic --engine avx512 --selftest             # exit code 0 when the engine passes
 node/target/release/neb-miner-gpu --selftest                                          # K0, and K1 and K2 where supported
 node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../neb-datasets.bin --gpu-kernel k2
-node/target/release/neb-miner-metal --selftest --dataset ../neb-datasets.bin            # the Apple GPU, K0 in Metal
+node/target/release/neb-miner-metal --selftest --dataset ../neb-datasets.bin            # the Apple GPU, every slot (784-128-10, KEP1, RET2)
 node/target/release/neb-miner-metal --node 127.0.0.1:3441 --dataset ../neb-datasets.bin
 ```
 

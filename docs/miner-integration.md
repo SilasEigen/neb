@@ -2,32 +2,36 @@
 
 nebhash is the proof of work of the NEB chain. One attempt is one integer training step of a small neural network that the chain owns: the nonce picks 16 samples of a dataset pinned by the chain, the attempt runs a forward and a backward pass in int32, and the gradient is hashed into the ticket. There is no floating point, so a CPU, a GPU kernel and a Python script give the same bytes.
 
-This page is for developers who want to add nebhash to their miner. The normative texts are `spec/shares.md` (the attempt, the step, the chain rules) and `spec/node.md` section 7.1 (the work service). Everything in this repository is Apache-2.0, kernels included: you can copy the code into a closed-source miner.
+This page is for developers who want to add nebhash to their miner. The normative texts are `spec/shares.md` (the attempt, the step, the chain rules), `spec/nebhash-v2.md` (the convolutional networks) and `spec/node.md` section 7.1 (the work service). Everything in this repository is Apache-2.0, kernels included: you can copy the code into a closed-source miner.
 
 ## The algorithm in numbers
 
+On the main network every job runs the KEP1 network of `spec/nebhash-v2.md`.
+
 | | |
 |---|---|
-| network | 784 inputs, 128 hidden units, 10 outputs, weights in -8..7 (4 bits) |
-| input of an attempt | 80-byte header, the model of the job (50,816 bytes; from block 8800, 13,000 for Kepler and 11,140 for the retina), the dataset the job names |
+| network | KEP1: two branches of 1D convolutions on 784 inputs, then 768-32-2; 26,000 weights in -8..7 (4 bits) |
+| input of an attempt | 80-byte header, the model of the job (13,000 bytes), the dataset the job names |
 | key | `BLAKE3(header)`, nonce in bytes 76 to 79 |
 | samples | 16 indices from the first 64 bytes of `ChaCha8(key)`: `idx = floor(u * N / 2^32)` |
-| work per attempt | about 3.3 million small-integer multiply-adds (two 16x784x128 products, small layer-2 terms) |
+| work per attempt | 16 samples; the forward pass of one sample is about 180,800 small-integer multiply-adds, then the backward pass |
 | output | 8-lane digest of the clipped gradient, `ticket = BLAKE3(digest \|\| key)`, compared as a 256-bit little-endian integer |
 | share target | block target times 32 |
-| check of one attempt | 0.5 to 1 ms of one CPU core with the C reference |
+| check of one attempt | about 2 ms of one CPU core with the C reference |
 
-The inner loops are int8-sized values in int32 sums (the largest value is 43,904), so dp4a and integer tensor-core instructions apply directly. Sections 5.1 to 5.4 of `spec/shares.md` give the whole attempt in about 30 lines.
+The inner loops are int8-sized values in int32 sums (the largest is 522,368, in the weight gradients of layer 1). `spec/nebhash-v2.md` gives the layers, the gradient and the step; the key, the samples and the ticket are in sections 3.5, 5.1 and 5.4 of `spec/shares.md`.
+
+The test network started with nebhash v1, a network of 784 inputs, 128 hidden units and 10 outputs (50,816 bytes of weights, about 3.3 million multiply-adds per attempt, 0.5 to 1 ms per check, largest value 43,904), where dp4a and integer tensor-core instructions apply directly. Sections 5.1 to 5.4 of `spec/shares.md` give that attempt in about 30 lines.
 
 ## Data the miner holds
 
-- **The dataset file**, `neb-datasets.bin` from the release. On the test network it is 259,897,080 bytes (BLAKE3 `296a174edbf67339fa0af341f063154292bba224b3d2cacf5b18b31c70da80eb`) and holds 4 datasets, `NMDS || LE32(4) || dataset 0 || ... || dataset 3`: the two of the slots, `NMD1 || LE32(N)` then N records of 785 bytes (784 values in 0..7, then the label), 13,404 and 34,464 samples; then the two of the upgrade to nebhash v2, `NMD2 || LE32(arch) || LE32(N)` then N records of the architecture's inputs and a label, 13,404 Kepler signals for KEP1 (arch 1) and 51,696 scans of 64 x 64 for RET2 (arch 2). Load it once at start (`spec/shares.md` section 11.6, `spec/nebhash-v2.md` section 2).
-- **On the main network** the file holds 2 datasets (16,087,037 bytes, BLAKE3 `790b57fbd830f3dcbe7de9d1146aa89a0a20799118e30dd48a343a5c98f19e72`), `NMDS || LE32(2)`, both `NMD2` datasets of architecture 1: the Kepler signals at index 0, the same dataset as above, and 7,089 TESS signals at index 1. Its jobs are nebhash v2 with the KEP1 network from the first block, so a miner for the main network needs neither a v1 engine nor RET2. The file of 4 datasets is the one of the test network (`docs/mainnet.md`).
+- **The dataset file**, `neb-datasets.bin` from the release. On the main network it is 16,087,037 bytes (BLAKE3 `790b57fbd830f3dcbe7de9d1146aa89a0a20799118e30dd48a343a5c98f19e72`) and holds 2 datasets, `NMDS || LE32(2) || dataset 0 || dataset 1`. Each is `NMD2 || LE32(arch) || LE32(N)` then N records of the architecture's inputs and a label, both of architecture 1 (KEP1, 784 inputs in 0..7): 13,404 Kepler signals at index 0 and 7,089 TESS signals at index 1. The jobs are nebhash v2 with the KEP1 network from the first block, so a miner for the main network needs neither a v1 engine nor RET2. Load the file once at start (`spec/shares.md` section 11.6, `spec/nebhash-v2.md` section 2, `docs/mainnet.md`).
+- **On the test network** the file is 259,897,080 bytes (BLAKE3 `296a174edbf67339fa0af341f063154292bba224b3d2cacf5b18b31c70da80eb`) and holds 4 datasets, `NMDS || LE32(4) || dataset 0 || ... || dataset 3`: the two of the slots, `NMD1 || LE32(N)` then N records of 785 bytes (784 values in 0..7, then the label), 13,404 and 34,464 samples; then the two of the upgrade to nebhash v2, the 13,404 Kepler signals for KEP1 (arch 1) and 51,696 scans of 64 x 64 for RET2 (arch 2).
 - **The model of the current job.** The weights change with every block, so the node sends them before every job: a Model frame of `index (1) || weights_hash (32) || packed weights`. The first byte is the index of the dataset of the job in the file, and the dataset says which network to run. Block `h` works on slot `h mod 2`, so the dataset alternates from one job to the next. Upload the weights to the GPU on each job (50,816 bytes for v1, 13,000 for KEP1, 11,140 for RET2).
 
-### nebhash v2, from block 8800
+### nebhash v2
 
-From block 8800 (slot 0) and 8801 (slot 1) the jobs use the convolutional networks of `spec/nebhash-v2.md`: KEP1 (two 1D branches on the Kepler views, 26,000 weights, about 180,800 multiply-adds per sample forward) and RET2 (three 2D convolutions on 64 x 64 scans, 22,280 weights, about 680,000). The key, the sample indices, the clip, the digest lanes and the ticket are the same as in v1. `pow/ref/nebhash2.c` is the reference for both, read from a table of layers; `pow/gpu/nebhash2_cuda.cu` is a CUDA kernel that matches it bit for bit; `vectors/nebhash2.txt` and `vectors/nebhash2_s1.txt` are the vectors.
+The main network runs nebhash v2 from its first block; the test network moved to it at blocks 8800 (slot 0) and 8801 (slot 1). The jobs use the convolutional networks of `spec/nebhash-v2.md`: KEP1 (two 1D branches on the Kepler views, 26,000 weights, about 180,800 multiply-adds per sample forward) and RET2 (three 2D convolutions on 64 x 64 scans, 22,280 weights, about 680,000). The key, the sample indices, the clip, the digest lanes and the ticket are the same as in v1. `pow/ref/nebhash2.c` is the reference for both, read from a table of layers; `pow/gpu/nebhash2_cuda.cu` is a CUDA kernel that matches it bit for bit; `vectors/nebhash2.txt` and `vectors/nebhash2_s1.txt` are the vectors.
 
 ## Talking to a node today
 
@@ -72,7 +76,7 @@ What matters for a miner:
 
 ## Pools and dev fee
 
-Today a miner talks to a node, solo, and the job pays the lock that the node operator chose with `--miner-lock`. The pool protocol is specified in `spec/pool.md`: JSON lines in the style of stratum, the payout address in the login, and no change to the node or the consensus. A miner with a dev fee authorizes its own login in the same session and submits that part of its attempts under it. The reference pool, open source, is on the roadmap for Q4 2026.
+The reference miners talk to a node, solo, and the job pays the lock that the node operator chose with `--miner-lock`. For pools, `spec/pool.md` specifies a protocol: JSON lines in the style of stratum, the payout address in the login, and no change to the node or the consensus. A miner with a dev fee authorizes its own login in the same session and submits that part of its attempts under it.
 
 A share on NEB is bound to the parent block, not to the header (`spec/shares.md` section 11.2): a miner can change job, extranonce or time at any moment without losing the shares it found, and the shares of every miner train the model, whoever finds the block.
 
@@ -80,7 +84,9 @@ A share on NEB is bound to the parent block, not to the header (`spec/shares.md`
 
 - Code: https://github.com/SilasEigen/neb
 - Specification: https://github.com/SilasEigen/neb/blob/main/spec/shares.md
+- Convolutional networks: https://github.com/SilasEigen/neb/blob/main/spec/nebhash-v2.md
 - Pool protocol: https://github.com/SilasEigen/neb/blob/main/spec/pool.md
+- Main network: https://github.com/SilasEigen/neb/blob/main/docs/mainnet.md
 - Running a node and a miner: https://github.com/SilasEigen/neb/blob/main/docs/testnet.md
 - Explorer: https://neuralenginebyte.org/#/explorer
 - Discord: https://discord.gg/B6dTbScw8

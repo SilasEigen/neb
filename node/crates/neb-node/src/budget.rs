@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// Default ticket evaluations per second for one peer session (`--pow-budget`).
@@ -61,10 +62,23 @@ impl TokenBucket {
 #[derive(Default)]
 pub struct BanList {
     until: Mutex<BTreeMap<IpAddr, Instant>>,
+    /// Set by `--trust-loopback`: a loopback address is then never banned.
+    trust_loopback: AtomicBool,
+}
+
+impl crate::node::Node {
+    /// From now on a loopback address is never banned (`--trust-loopback`): software of the operator that sends
+    /// an invalid block or share record loses its session and may connect again. Other addresses are banned as before.
+    pub fn trust_loopback(&self) {
+        self.bans.trust_loopback.store(true, Ordering::Relaxed);
+    }
 }
 
 impl BanList {
     pub fn ban(&self, ip: IpAddr) {
+        if ip.is_loopback() && self.trust_loopback.load(Ordering::Relaxed) {
+            return;
+        }
         self.ban_at(ip, Instant::now());
     }
 
@@ -122,5 +136,23 @@ mod tests {
         assert!(bans.is_banned_at(ip, t0 + BAN_TIME - ms(1)));
         assert!(!bans.is_banned_at(ip, t0 + BAN_TIME));
         assert!(!bans.is_banned_at(other, t0));
+    }
+
+    #[test]
+    fn a_trusted_loopback_address_is_not_banned() {
+        let local: IpAddr = "127.0.0.1".parse().unwrap();
+        let remote: IpAddr = "192.0.2.7".parse().unwrap();
+        let bans = BanList::default();
+        bans.ban(local);
+        assert!(bans.is_banned(local), "without the option a loopback address is banned like any other");
+
+        let bans = BanList::default();
+        bans.trust_loopback.store(true, Ordering::Relaxed);
+        bans.ban(local);
+        bans.ban("::1".parse().unwrap());
+        bans.ban(remote);
+        assert!(!bans.is_banned(local));
+        assert!(!bans.is_banned("::1".parse().unwrap()));
+        assert!(bans.is_banned(remote), "the option leaves other addresses alone");
     }
 }

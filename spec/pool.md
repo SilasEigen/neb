@@ -124,15 +124,18 @@ ticket    = the ticket of spec/shares.md section 5.4 (spec/nebhash-v2.md for KEP
 5. **Solutions.** An attempt whose ticket is at most the block target is sent to the node with a Submit frame (the
    job id of the node's job, the extranonce `extranonce1 || extranonce2`, the time, the nonce).
 6. **Chain shares.** For an attempt whose ticket is at most the share target, the pool builds the share record
-   `body_root || LE32(time) || LE32(nonce)` (`spec/shares.md` section 11.2) and sends it to its node in a `shares`
-   message whose parent is the `parent` of the job, over a peer session it holds with the node (`spec/node.md`
-   section 8.2: the `version` handshake with protocol 3 and the genesis id, then `pong` to every `ping`; the pool may
-   ignore the other messages, and the session takes one of the node's peer slots). The pool forwards every chain share
+   `body_root || LE32(time) || LE32(nonce)` (`spec/shares.md` section 11.2) and hands it to its node with the
+   JSON-RPC method `submitshares` (`spec/node.md` section 7.2), whose first parameter is the `parent` of the job. A
+   node older than 1.0.3 has no such method: the pool then sends the record in a `shares` message over a peer session
+   it holds with the node (`spec/node.md` section 8.2: the `version` handshake with protocol 3 and the genesis id,
+   then `pong` to every `ping`; the pool may ignore the other messages, and the session takes one of the node's peer
+   slots). The pool forwards every chain share
    it receives: these records are the training steps of the chain, and a node lists the records of every miner whose
    shares reach it. A share header may carry any coinbase, time and nonce (`spec/shares.md` section 11.2), so a pool
    attempt with any `extranonce2` is a valid share; the Share frame of the work service cannot carry it, since it
-   names only a nonce of the reference header. The node checks each record again and bans for 24 hours the address
-   of a session that sends an invalid one, so the pool sends only records it checked.
+   names only a nonce of the reference header. The node checks each record again, so the pool sends only records it
+   checked: `submitshares` answers an invalid record with an error, and a peer session that sends one is closed and
+   its address banned for 24 hours, unless the address is a loopback one and the node runs with `--trust-loopback`.
 7. **Accounting** of pool shares and the payout scheme are the pool's choice and outside this protocol.
 
 ## 8. Errors

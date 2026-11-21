@@ -159,8 +159,8 @@ fn getutxos_lists_the_outputs_of_a_lock() {
         assert_eq!(utxo.lock_data, demo::MINER_LOCK);
     }
     // the node stops reading at the limit it is given
-    assert_eq!(node.utxos_of(&demo::MINER_LOCK, 2).len(), 2);
-    assert_eq!(node.utxos_of(&demo::MINER_LOCK, 20_000).len(), 3);
+    assert_eq!(node.utxos_of(&demo::MINER_LOCK, None, 2).len(), 2);
+    assert_eq!(node.utxos_of(&demo::MINER_LOCK, None, 20_000).len(), 3);
     let none = call(rpc.addr, "getutxos", vec![Value::String(hex(&[0x77; 32]))]);
     assert_eq!(result(&none).as_array().unwrap().len(), 0);
     assert_eq!(error_code(&call(rpc.addr, "getutxos", vec![Value::String("12".into())])), -8);
@@ -235,6 +235,139 @@ fn sendrawtransaction_reaches_the_mempool() {
     let pool_response = call(rpc.addr, "getrawmempool", vec![]);
     let pool = result(&pool_response);
     assert_eq!(pool.as_array().unwrap(), &[Value::String(hex(&txid))]);
+    drop(rpc);
+    drop(node);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// getblock with `true` gives the block as an object: where it stands, its header fields and its transactions.
+// gettransaction reads a transaction in the block of the height it is given.
+#[test]
+fn getblock_verbose_and_gettransaction() {
+    let dir = temp_dir("verbose");
+    let node = Node::open(NodeConfig { network: network(demo::MINER_LOCK), data_dir: dir.clone(), verify_pow: false })
+        .expect("node");
+    let blocks = add_chain(&node, 3);
+    let rpc = node.start_rpc("127.0.0.1:0".parse().unwrap()).expect("rpc");
+    let id = Value::String(hex(&blocks[0].id()));
+
+    let response = call(rpc.addr, "getblock", vec![id.clone(), Value::Bool(true)]);
+    let block = result(&response);
+    assert_eq!(block.get("hash").unwrap().as_str().unwrap(), hex(&blocks[0].id()));
+    assert_eq!(block.get("height").unwrap().as_i64(), Some(1));
+    assert_eq!(block.get("mainchain").unwrap().as_bool(), Some(true));
+    assert_eq!(block.get("confirmations").unwrap().as_i64(), Some(3));
+    assert_eq!(block.get("parent").unwrap().as_str().unwrap(), hex(&blocks[0].header.parent));
+    assert_eq!(block.get("time").unwrap().as_i64(), Some(i64::from(blocks[0].header.time)));
+    assert_eq!(block.get("bits").unwrap().as_i64(), Some(i64::from(blocks[0].header.bits)));
+    let txs = block.get("tx").unwrap().as_array().unwrap();
+    assert_eq!(txs.len(), 1);
+    let coinbase = &blocks[0].txs[0];
+    assert_eq!(txs[0].get("txid").unwrap().as_str().unwrap(), hex(&coinbase.txid()));
+    assert_eq!(txs[0].get("coinbase").unwrap().as_bool(), Some(true));
+    assert_eq!(txs[0].get("inputs").unwrap().as_array().unwrap().len(), 0);
+    let outputs = txs[0].get("outputs").unwrap().as_array().unwrap();
+    assert_eq!(outputs.len(), coinbase.outputs.len());
+    for (n, output) in outputs.iter().enumerate() {
+        assert_eq!(output.get("index").unwrap().as_i64(), Some(n as i64));
+        assert_eq!(output.get("amount").unwrap().as_i64(), Some(coinbase.outputs[n].amount as i64));
+        assert_eq!(output.get("lock").unwrap().as_str().unwrap(), hex(&coinbase.outputs[n].lock_data));
+    }
+    // without the flag, or with false, the answer is the hex of 1.0.2
+    let plain = call(rpc.addr, "getblock", vec![id.clone(), Value::Bool(false)]);
+    assert_eq!(Block::decode(&decode_hex(result(&plain).as_str().unwrap())).unwrap(), blocks[0]);
+    assert_eq!(error_code(&call(rpc.addr, "getblock", vec![id, Value::Number(1)])), -32602);
+
+    let txid = Value::String(hex(&coinbase.txid()));
+    let response = call(rpc.addr, "gettransaction", vec![txid.clone(), Value::Number(1)]);
+    let tx = result(&response);
+    assert_eq!(tx.get("height").unwrap().as_i64(), Some(1));
+    assert_eq!(tx.get("blockhash").unwrap().as_str().unwrap(), hex(&blocks[0].id()));
+    assert_eq!(tx.get("confirmations").unwrap().as_i64(), Some(3));
+    assert_eq!(decode_hex(tx.get("hex").unwrap().as_str().unwrap()), coinbase.encode());
+    // the wrong block, a height above the tip, and no height for a transaction that is not in the mempool
+    assert_eq!(error_code(&call(rpc.addr, "gettransaction", vec![txid.clone(), Value::Number(2)])), -5);
+    assert_eq!(error_code(&call(rpc.addr, "gettransaction", vec![txid.clone(), Value::Number(9)])), -8);
+    assert_eq!(error_code(&call(rpc.addr, "gettransaction", vec![txid])), -5);
+    drop(rpc);
+    drop(node);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// getutxos with a limit reads a lock by pages: each page starts after the last outpoint of the page before.
+#[test]
+fn getutxos_reads_a_lock_by_pages() {
+    let dir = temp_dir("pages");
+    let node = Node::open(NodeConfig { network: network(demo::MINER_LOCK), data_dir: dir.clone(), verify_pow: false })
+        .expect("node");
+    add_chain(&node, 6);
+    let rpc = node.start_rpc("127.0.0.1:0".parse().unwrap()).expect("rpc");
+    let lock = Value::String(hex(&demo::MINER_LOCK));
+    let all_response = call(rpc.addr, "getutxos", vec![lock.clone()]);
+    let all = result(&all_response).as_array().unwrap().to_vec();
+    assert_eq!(all.len(), 7);
+
+    let mut paged = Vec::new();
+    let mut params = vec![lock.clone(), Value::Number(3)];
+    loop {
+        let response = call(rpc.addr, "getutxos", params.clone());
+        let page = result(&response).as_array().unwrap().to_vec();
+        assert!(page.len() <= 3);
+        let short = page.len() < 3;
+        if let Some(last) = page.last() {
+            params = vec![
+                lock.clone(),
+                Value::Number(3),
+                last.get("txid").unwrap().clone(),
+                last.get("index").unwrap().clone(),
+            ];
+        }
+        paged.extend(page);
+        if short {
+            break;
+        }
+    }
+    assert_eq!(paged, all, "the pages are the whole list, in the same order");
+    assert_eq!(error_code(&call(rpc.addr, "getutxos", vec![lock.clone(), Value::Number(0)])), -32602);
+    assert_eq!(error_code(&call(rpc.addr, "getutxos", vec![lock.clone(), Value::Number(20_001)])), -32602);
+    assert_eq!(
+        error_code(&call(rpc.addr, "getutxos", vec![lock, Value::Number(3), Value::String("12".into())])),
+        -32602
+    );
+    drop(rpc);
+    drop(node);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// submitshares hands share records to the node without a peer session: a record of the round of the tip is kept
+// once, and a record for a parent that is not recent is ignored.
+#[test]
+fn submitshares_keeps_the_records_of_a_recent_parent() {
+    let dir = temp_dir("shares");
+    let node = Node::open(NodeConfig { network: network(demo::MINER_LOCK), data_dir: dir.clone(), verify_pow: false })
+        .expect("node");
+    let blocks = add_chain(&node, 3);
+    let rpc = node.start_rpc("127.0.0.1:0".parse().unwrap()).expect("rpc");
+    let tip = Value::String(hex(&blocks[2].id()));
+    let record = |n: u8| {
+        let mut bytes = [n; 40];
+        bytes[32..36].copy_from_slice(&(T0 + 200).to_le_bytes());
+        Value::String(hex(&bytes))
+    };
+    let two = Value::Array(vec![record(1), record(2)]);
+    assert_eq!(result(&call(rpc.addr, "submitshares", vec![tip.clone(), two.clone()])).as_i64(), Some(2));
+    assert_eq!(
+        result(&call(rpc.addr, "submitshares", vec![tip.clone(), two.clone()])).as_i64(),
+        Some(0),
+        "known records"
+    );
+    let old = Value::String(hex(&blocks[0].id()));
+    assert_eq!(result(&call(rpc.addr, "submitshares", vec![old, two])).as_i64(), Some(0), "not a recent parent");
+
+    assert_eq!(error_code(&call(rpc.addr, "submitshares", vec![tip.clone()])), -32602);
+    assert_eq!(error_code(&call(rpc.addr, "submitshares", vec![tip.clone(), Value::Array(vec![])])), -32602);
+    let short = Value::Array(vec![Value::String("00".repeat(39))]);
+    assert_eq!(error_code(&call(rpc.addr, "submitshares", vec![tip, short])), -22);
     drop(rpc);
     drop(node);
     let _ = std::fs::remove_dir_all(&dir);

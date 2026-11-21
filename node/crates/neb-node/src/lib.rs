@@ -17,6 +17,7 @@ pub mod node;
 pub mod p2p;
 pub mod params;
 pub mod rpc;
+pub mod rpc_chain;
 pub mod shares;
 pub mod style;
 

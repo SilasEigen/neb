@@ -13,12 +13,14 @@
 pub mod address;
 pub mod display;
 pub mod encryption;
+pub mod payment;
 pub mod rpc;
 pub mod wallet;
 
 pub use address::{ADDRESS_PREFIX, decode_address, encode_address};
+pub use payment::pay;
 pub use rpc::RpcClient;
 pub use wallet::{
-    AmountError, FEE, OwnedUtxo, Scan, SelectError, Selection, Wallet, WalletError, WalletKey, build_transaction,
-    format_amount, parse_amount, scan, select,
+    AmountError, FEE, OwnedUtxo, Scan, SelectError, Selection, Wallet, WalletError, WalletKey, build_payment,
+    build_transaction, format_amount, parse_amount, scan, select,
 };

@@ -51,6 +51,7 @@ struct Options {
     max_peers: usize,
     miner_lock: Option<[u8; 32]>,
     pow_budget: NonZeroU32,
+    trust_loopback: bool,
     color: ColorMode,
 }
 
@@ -71,6 +72,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         max_peers: params::MAX_PEERS,
         miner_lock: None,
         pow_budget: NonZeroU32::new(DEFAULT_POW_BUDGET).expect("nonzero"),
+        trust_loopback: false,
         color: ColorMode::Auto,
     };
     let mut i = 0;
@@ -131,6 +133,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                 options.pow_budget =
                     value(i)?.parse().map_err(|_| "--pow-budget takes a positive number".to_string())?;
                 i += 2;
+            }
+            "--trust-loopback" => {
+                options.trust_loopback = true;
+                i += 1;
             }
             "--color" => {
                 options.color = match value(i)?.as_str() {
@@ -254,6 +260,9 @@ pub fn run(args: &[String]) -> i32 {
     };
     if let Some(lock) = options.miner_lock {
         node.set_miner_lock(lock);
+    }
+    if options.trust_loopback {
+        node.trust_loopback();
     }
     let height = node.height();
     let genesis_id = node.chain_id();

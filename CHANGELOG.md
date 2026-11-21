@@ -6,6 +6,22 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+Additions for pools and payout systems. The consensus rules, the protocol version and the genesis are unchanged, and
+the nodes and miners of 1.0.2 work with this version.
+
+- JSON-RPC: `submitshares` hands share records to the node, so a pool no longer needs a peer session with its own
+  node to relay the chain shares of its miners (`spec/pool.md` section 7).
+- JSON-RPC: `getblock` with `true` gives the block as an object (height, confirmations, whether it is on the best
+  chain, and its transactions with their outputs), and `gettransaction` gives one transaction, read in the block of
+  the height it is given or in the mempool. The node still keeps no index of transactions.
+- JSON-RPC: `getutxos` takes a limit and the outpoint to start after, so a lock with more than 20,000 unspent
+  outputs is read by pages. Without a limit the method answers as in 1.0.2.
+- `neb-node --trust-loopback`: a loopback address is never banned. A pool whose software sends its node an invalid
+  record loses its session and connects again, where it was cut off for 24 hours. Off by default.
+- `neb-wallet send` takes several `ADDRESS AMOUNT` pairs and pays them with one transaction, up to 254 recipients.
+- `neb-wallet send`: the fee is the size of the transaction in bytes when that is above the fixed fee of 0.0001 NEB.
+  A payment that needed more than about 74 inputs was refused by the node ("fee below 1 base unit per byte").
+
 ## [1.0.2] - 2026-11-19
 
 An optional release: same protocol, network, genesis and dataset file as 1.0.1, and the nodes and miners of both

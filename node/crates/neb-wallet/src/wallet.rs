@@ -557,14 +557,29 @@ pub fn build_transaction(
     chain_id: &[u8; 32],
     change_lock: [u8; 32],
 ) -> Result<Transaction, WalletError> {
-    if selection.inputs.is_empty() {
+    build_payment(wallet, selection, &[(recipient_lock, selection.target)], chain_id, change_lock)
+}
+
+/// `build_transaction` for several recipients: one output per (lock, amount) of `payments`, in that order, then the
+/// change. The amounts must sum to the target of the selection.
+pub fn build_payment(
+    wallet: &Wallet,
+    selection: &Selection,
+    payments: &[([u8; 32], u64)],
+    chain_id: &[u8; 32],
+    change_lock: [u8; 32],
+) -> Result<Transaction, WalletError> {
+    if selection.inputs.is_empty()
+        || payments.iter().try_fold(0u64, |sum, p| sum.checked_add(p.1)) != Some(selection.target)
+    {
         return Err(WalletError::Select(SelectError::ZeroTarget));
     }
     let mut inputs = Vec::with_capacity(selection.inputs.len());
     for utxo in &selection.inputs {
         inputs.push(TxIn { prev_txid: utxo.outpoint.txid, prev_index: utxo.outpoint.index, witness: Vec::new() });
     }
-    let mut outputs = vec![TxOut { amount: selection.target, lock_type: LOCK_SINGLE, lock_data: recipient_lock }];
+    let mut outputs: Vec<TxOut> =
+        payments.iter().map(|&(lock_data, amount)| TxOut { amount, lock_type: LOCK_SINGLE, lock_data }).collect();
     if selection.change > 0 {
         outputs.push(TxOut { amount: selection.change, lock_type: LOCK_SINGLE, lock_data: change_lock });
     }

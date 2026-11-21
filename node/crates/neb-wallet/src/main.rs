@@ -8,9 +8,7 @@ use std::path::{Path, PathBuf};
 
 use neb_wallet::display::{Look, Row};
 use neb_wallet::wallet::WalletKey;
-use neb_wallet::{
-    ADDRESS_PREFIX, FEE, Wallet, build_transaction, decode_address, format_amount, parse_amount, scan, select,
-};
+use neb_wallet::{ADDRESS_PREFIX, Wallet, decode_address, format_amount, parse_amount, pay, scan};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -36,7 +34,8 @@ fn usage() -> String {
        lock-of ADDRESS     print the lock of a neb1 address, for neb-node --miner-lock\n\
        public-key          print the Ed25519 public key of the first key (64 hex)\n\
        balance             scan the node and print the balance\n\
-       send ADDRESS AMOUNT send coins to a neb1 address\n\
+       send ADDRESS AMOUNT send coins to a neb1 address; more ADDRESS AMOUNT pairs pay\n\
+                           several addresses with one transaction\n\
      \n\
      defaults: --wallet wallet.txt --rpc http://127.0.0.1:8432\n\
      The password is asked on the terminal, or read from NEB_WALLET_PASSWORD."
@@ -198,10 +197,17 @@ fn run(args: &[String]) -> Result<(), String> {
             Ok(())
         }
         "send" => {
-            let address = args.get(i + 1).ok_or("send needs an address")?;
-            let amount_text = args.get(i + 2).ok_or("send needs an amount")?;
-            let amount = parse_amount(amount_text).map_err(|e| e.to_string())?;
-            let recipient = decode_address(ADDRESS_PREFIX, address).map_err(|e| e.to_string())?;
+            // one or several pairs: ADDRESS AMOUNT [ADDRESS AMOUNT ...], all paid by one transaction
+            let pairs = &args[(i + 1).min(args.len())..];
+            if pairs.is_empty() || !pairs.len().is_multiple_of(2) {
+                return Err("send needs an address and an amount for each recipient".into());
+            }
+            let mut payments = Vec::with_capacity(pairs.len() / 2);
+            for pair in pairs.chunks(2) {
+                let lock = decode_address(ADDRESS_PREFIX, &pair[0]).map_err(|e| format!("{}: {e}", pair[0]))?;
+                let amount = parse_amount(&pair[1]).map_err(|e| format!("{}: {e}", pair[1]))?;
+                payments.push((lock, amount));
+            }
             let wallet = open(&wallet_path)?;
             let change = wallet.keys.first().ok_or("wallet has no keys")?.lock_data;
             let client = neb_wallet::RpcClient::new(rpc_url.clone())?;
@@ -209,12 +215,13 @@ fn run(args: &[String]) -> Result<(), String> {
             // The scan reads blocks only, not the mempool: an output spent by a
             // pending transaction can be selected again, and the node refuses a
             // payment that spends it a second time.
-            let selection = select(&scan.mature(), amount, FEE).map_err(|e| e.to_string())?;
             // the chain id is the genesis block id (spec/node.md section 5.2)
             let chain_id_text = client.block_hash(0)?;
             let chain_id = decode_hex32(&chain_id_text).ok_or("bad genesis hash")?;
-            let tx = build_transaction(&wallet, &selection, recipient, &chain_id, change).map_err(|e| e.to_string())?;
+            let (tx, selection) =
+                pay(&wallet, &scan.mature(), &payments, &chain_id, change).map_err(|e| e.to_string())?;
             let txid = client.send_raw_transaction(&hex(&tx.encode()))?;
+            println!("outputs  {}", payments.len());
             println!("inputs   {}", selection.inputs.len());
             println!("change   {} NEB", format_amount(selection.change));
             println!("fee      {} NEB", format_amount(selection.fee));

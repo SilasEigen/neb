@@ -14,6 +14,7 @@
 //! beyond the shape needed to build the state (spec/node.md section 6.6).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::ops::Bound;
 use std::sync::Arc;
 
 /// A block removed by a reorganisation: its id and its state.
@@ -291,9 +292,11 @@ impl ChainState {
         &self.utxos
     }
 
-    /// The first `limit` unspent outputs whose lock data is `lock`, in outpoint order. Reads the set until the limit.
-    pub fn utxos_of(&self, lock: &[u8; 32], limit: usize) -> Vec<(OutPoint, Utxo)> {
-        let owned = self.utxos.iter().filter(|(_, u)| u.lock_data == *lock);
+    /// The first `limit` unspent outputs whose lock data is `lock`, in outpoint order, after the outpoint `after`
+    /// when one is given. Reads the set until the limit.
+    pub fn utxos_of(&self, lock: &[u8; 32], after: Option<OutPoint>, limit: usize) -> Vec<(OutPoint, Utxo)> {
+        let start = after.map_or(Bound::Unbounded, Bound::Excluded);
+        let owned = self.utxos.range((start, Bound::Unbounded)).filter(|(_, u)| u.lock_data == *lock);
         owned.take(limit).map(|(op, u)| (*op, u.clone())).collect()
     }
 

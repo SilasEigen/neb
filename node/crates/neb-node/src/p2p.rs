@@ -17,7 +17,8 @@
 //! Local policy only: no rule here affects consensus. A peer is banned for
 //! 24 hours only for a block with an invalid proof of work or share, or a
 //! share record above the share target (spec/node.md section 8.1); the budget
-//! of ticket evaluations is per session.
+//! of ticket evaluations is per session. With `--trust-loopback` a loopback
+//! address is not banned: its session ends and it may connect again.
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};

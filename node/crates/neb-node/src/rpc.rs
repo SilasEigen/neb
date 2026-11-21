@@ -21,6 +21,7 @@ use neb_chain::tx::Transaction;
 use neb_json::Value;
 
 use crate::node::Node;
+use crate::rpc_chain;
 
 /// Largest accepted request body and header block, in bytes.
 const MAX_BODY: usize = 1024 * 1024;
@@ -155,13 +156,13 @@ fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 /// out of range, -22 undecodable transaction, -26 transaction rejected (a
 /// common numbering of these conditions).
 #[derive(Debug, Clone)]
-struct RpcError {
+pub(crate) struct RpcError {
     code: i64,
     message: String,
 }
 
 impl RpcError {
-    fn new(code: i64, message: impl Into<String>) -> RpcError {
+    pub(crate) fn new(code: i64, message: impl Into<String>) -> RpcError {
         RpcError { code, message: message.into() }
     }
 }
@@ -189,11 +190,11 @@ fn params(request: &Value) -> &[Value] {
     request.get("params").and_then(Value::as_array).unwrap_or(&[])
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn parse_hex32(text: &str) -> Option<[u8; 32]> {
+pub(crate) fn parse_hex32(text: &str) -> Option<[u8; 32]> {
     if text.len() != 64 {
         return None;
     }
@@ -204,7 +205,7 @@ fn parse_hex32(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-fn parse_hex(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn parse_hex(text: &str) -> Option<Vec<u8>> {
     if !text.len().is_multiple_of(2) {
         return None;
     }
@@ -215,7 +216,7 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-fn required_str<'a>(params: &'a [Value], index: usize, name: &str) -> Result<&'a str, RpcError> {
+pub(crate) fn required_str<'a>(params: &'a [Value], index: usize, name: &str) -> Result<&'a str, RpcError> {
     params.get(index).and_then(Value::as_str).ok_or_else(|| RpcError::new(-32602, format!("{name} must be a string")))
 }
 
@@ -224,9 +225,6 @@ fn required_height(params: &[Value]) -> Result<u32, RpcError> {
         params.first().and_then(Value::as_i64).ok_or_else(|| RpcError::new(-32602, "height must be an integer"))?;
     u32::try_from(value).map_err(|_| RpcError::new(-8, "block height out of range"))
 }
-
-/// The most outputs that `getutxos` gives for one lock.
-const MAX_UTXOS: usize = 20_000;
 
 fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
     let method =
@@ -245,13 +243,20 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             Ok(Value::String(hex(&block.id())))
         }
         // Any known block by id, side branches included; the result is the block
-        // encoding of spec/node.md section 4 in hex.
+        // encoding of spec/node.md section 4 in hex, or with a true second parameter
+        // an object with its fields, where it stands and its transactions.
         "getblock" => {
             let text = required_str(params, 0, "block hash")?;
             let id = parse_hex32(text).ok_or_else(|| RpcError::new(-8, "block hash must be 64 hex characters"))?;
             let block = node.block(&id).ok_or_else(|| RpcError::new(-5, "block not found"))?;
-            Ok(Value::String(hex(&block.encode())))
+            match params.get(1) {
+                None | Some(Value::Bool(false)) => Ok(Value::String(hex(&block.encode()))),
+                Some(Value::Bool(true)) => Ok(rpc_chain::block_json(node, &block)),
+                Some(_) => Err(RpcError::new(-32602, "the second parameter of getblock is true or false")),
+            }
         }
+        "gettransaction" => rpc_chain::gettransaction(node, params),
+        "submitshares" => rpc_chain::submitshares(node, params),
         "getrawmempool" => Ok(Value::Array(node.mempool_ids().iter().map(|id| Value::String(hex(id))).collect())),
         "getpeerinfo" => Ok(Value::Array(
             node.peer_info()
@@ -335,26 +340,7 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             Ok(Value::Object(map))
         }
         // The unspent outputs of the best chain with that lock data, for a wallet that keeps no copy of the chain.
-        // The answer is bounded: a lock with more outputs than `MAX_UTXOS` reads the chain with `getblock`.
-        "getutxos" => {
-            let text = required_str(params, 0, "lock")?;
-            let lock = parse_hex32(text).ok_or_else(|| RpcError::new(-8, "lock must be 64 hex characters"))?;
-            let found = node.utxos_of(&lock, MAX_UTXOS + 1);
-            if found.len() > MAX_UTXOS {
-                return Err(RpcError::new(-8, "too many outputs for one call"));
-            }
-            let outputs = found.into_iter().map(|(op, utxo)| {
-                let mut map = BTreeMap::new();
-                map.insert("txid".to_string(), Value::String(hex(&op.txid)));
-                map.insert("index".to_string(), Value::Number(op.index as i64));
-                map.insert("amount".to_string(), Value::Number(utxo.amount as i64));
-                map.insert("locktype".to_string(), Value::Number(utxo.lock_type as i64));
-                map.insert("height".to_string(), Value::Number(utxo.height as i64));
-                map.insert("coinbase".to_string(), Value::Bool(utxo.coinbase));
-                Value::Object(map)
-            });
-            Ok(Value::Array(outputs.collect()))
-        }
+        "getutxos" => rpc_chain::getutxos(node, params),
         // Mempool admission only (spec/node.md section 6.4); the node announces
         // the transaction to its peers.
         "sendrawtransaction" => {

@@ -173,6 +173,9 @@ Both nodes must have the same genesis id; the node prints it at start. Options:
                    refuses miners
 --pow-budget N     ticket evaluations per second that one peer may cost
                    (default 200, at least 1)
+--trust-loopback   never ban a loopback address: software on the same machine
+                   that sends an invalid block or share record loses its
+                   session and may connect again
 --color MODE       auto, always or never
 ```
 
@@ -340,6 +343,7 @@ neb-wallet --wallet wallet.txt lock
 neb-wallet lock-of ADDRESS
 neb-wallet --rpc http://127.0.0.1:8432 --wallet wallet.txt balance
 neb-wallet --rpc http://127.0.0.1:8432 --wallet wallet.txt send neb1... 1.5
+neb-wallet --rpc http://127.0.0.1:8432 --wallet wallet.txt send neb1... 1.5 neb1... 0.25   # one transaction, two recipients
 ```
 
 `new` creates a wallet with one key and asks for a password (typed twice; an empty password leaves the file in clear). `encrypt` encrypts a plain wallet file. `import` adds a key to an existing wallet or creates the file. `list` prints every address and `address` prints the first one. `lock` prints the 64-hex lock of the first key, the value that `neb-node --miner-lock` takes to pay mined coins to the wallet, and `lock-of ADDRESS` prints the lock of any `neb1` address, so that a rig can mine for an address without the wallet file. `balance` scans the best chain through `getblock`, `getblockhash` and `getblockcount` and reports confirmed and immature coinbase amounts. `send` selects confirmed coins from largest to smallest, pays a fixed fee of 0.0001 coin, signs every input and submits the transaction with `sendrawtransaction`. Change returns to the first key of the wallet. A change amount below 0.00001 coin is added to the fee. Every command that reads an encrypted file asks for its password on the terminal, or reads it from `NEB_WALLET_PASSWORD` in scripts. The key is derived from the password with Argon2id (64 MiB, 3 passes) and the secrets are sealed with XChaCha20-Poly1305; a wrong password and a modified file give the same error. A lost password cannot be recovered: keep a copy of the file and of the password. On Unix the file is created readable by its owner only (mode 0600).

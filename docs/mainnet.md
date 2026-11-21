@@ -7,7 +7,7 @@ This guide gives the parameters of the NEB main network and what differs from th
 | Item | Value |
 |---|---|
 | network name | mainnet |
-| software version | 1.0.3 |
+| software version | 1.0.4 |
 | protocol version | 3 |
 | address prefix | `neb` (bech32m, 32-byte lock data) |
 | peer-to-peer port | 3440 |

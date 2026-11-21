@@ -6,6 +6,19 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+## [1.0.4] - 2026-11-21
+
+An optional release for pools: same protocol, network, genesis and dataset file as 1.0.3, and the nodes and miners
+of 1.0.2, 1.0.3 and 1.0.4 work together. Nobody has to upgrade.
+
+- Work service: a miner that connects, or whose submission was rejected, gets the newest job while it is on the
+  best block and less than 30 s old, where it got a job of its own. A pool with many sessions no longer pushes
+  valid jobs out of the 64 the node keeps.
+- Work service: the first job id of a run is drawn at random, so an id of an earlier run of the node names no job.
+- Work service: result code 4, unknown job. It was part of code 1.
+- JSON-RPC: `getjob` gives the transactions and the share list of a job, and `submitblock` takes a whole block, so
+  a pool can hand a solution to a second node when the node of the job does not answer.
+
 ## [1.0.3] - 2026-11-21
 
 An optional release: same protocol, network, genesis and dataset file as 1.0.2, and the nodes and miners of both

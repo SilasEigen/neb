@@ -15,6 +15,17 @@ use crate::budget::TokenBucket;
 use crate::node::{Node, NodeError, NodeInner};
 
 impl Node {
+    /// The job a session works on: the newest job while it is on the tip and younger than `JOB_REFRESH_SECS`, or a
+    /// new one. Sessions share it, each with its own extranonce (spec/node.md section 7.1).
+    pub fn current_job(&self, miner_lock: [u8; 32], now: u32) -> Result<u64, String> {
+        let mut inner = self.inner.lock().expect("node lock");
+        let NodeInner { state, mempool, work, .. } = &mut *inner;
+        match work.current(&state.tip_id(), now, crate::node::JOB_REFRESH_SECS) {
+            Some(id) => Ok(id),
+            None => work.make_job(state, mempool, miner_lock, now),
+        }
+    }
+
     /// Records a share a miner found on job `id` for the share list of a later
     /// block and relays it to the peers. True when the record is new.
     pub fn accept_share(&self, id: u64, nonce: u32) -> Result<bool, String> {

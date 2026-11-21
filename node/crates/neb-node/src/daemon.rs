@@ -413,10 +413,10 @@ fn starts_in(wait: u32) -> String {
     format!("the network starts in {} h {:02} min: no block can be mined before then", left / 3600, left % 3600 / 60)
 }
 
-/// Sends the model frames and a fresh job to one session in one write, so the
-/// miner never holds a job without the model it refers to.
+/// Sends the model frames and the current job to one session in one write, so
+/// the miner never holds a job without the model it refers to.
 fn send_job(node: &Node, writer: &MinerWriter, miner_lock: [u8; 32]) -> std::io::Result<()> {
-    let id = node.make_job(miner_lock, now()).map_err(std::io::Error::other)?;
+    let id = node.current_job(miner_lock, now()).map_err(std::io::Error::other)?;
     let frames = node.work_frames(id).ok_or_else(|| std::io::Error::other("job disappeared"))?;
     send(writer, &frames)
 }

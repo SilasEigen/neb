@@ -256,6 +256,8 @@ fn dispatch(node: &Node, request: &Value) -> Result<Value, RpcError> {
             }
         }
         "gettransaction" => rpc_chain::gettransaction(node, params),
+        "getjob" => rpc_chain::getjob(node, params),
+        "submitblock" => rpc_chain::submitblock(node, params),
         "submitshares" => rpc_chain::submitshares(node, params),
         "getrawmempool" => Ok(Value::Array(node.mempool_ids().iter().map(|id| Value::String(hex(id))).collect())),
         "getpeerinfo" => Ok(Value::Array(

@@ -372,3 +372,49 @@ fn submitshares_keeps_the_records_of_a_recent_parent() {
     drop(node);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// submitblock connects a whole block handed over JSON-RPC, and getjob gives the transactions and the share list of a
+// job of the work service. A submission on a job the node does not keep has its own result code.
+#[test]
+fn submitblock_and_getjob() {
+    let dir = temp_dir("submitblock");
+    let node = Node::open(NodeConfig { network: network(demo::MINER_LOCK), data_dir: dir.clone(), verify_pow: false })
+        .expect("node");
+    let blocks = add_chain(&node, 2);
+    let rpc = node.start_rpc("127.0.0.1:0".parse().unwrap()).expect("rpc");
+
+    let next = demo::block(blocks[1].id(), T0 + 60 * 3, 0xC280_0000, 4003, vec![coinbase(3)]);
+    let sent = call(rpc.addr, "submitblock", vec![Value::String(hex(&next.encode()))]);
+    assert_eq!(result(&sent).as_str().unwrap(), hex(&next.id()));
+    assert_eq!(node.height(), 3);
+    assert_eq!(node.tip_id(), next.id());
+    // the same block again is known, not an error
+    let again = call(rpc.addr, "submitblock", vec![Value::String(hex(&next.encode()))]);
+    assert_eq!(result(&again).as_str().unwrap(), hex(&next.id()));
+    assert_eq!(error_code(&call(rpc.addr, "submitblock", vec![Value::String("zz".into())])), -22);
+    assert_eq!(error_code(&call(rpc.addr, "submitblock", vec![Value::String("00".into())])), -22);
+    // a block whose parent the node does not have
+    let orphan = demo::block([0x33; 32], T0 + 60 * 9, 0xC280_0000, 4009, vec![coinbase(9)]);
+    assert_eq!(error_code(&call(rpc.addr, "submitblock", vec![Value::String(hex(&orphan.encode()))])), -26);
+
+    let id = node.make_job(demo::MINER_LOCK, T0 + 60 * 4).expect("job");
+    let response = call(rpc.addr, "getjob", vec![Value::Number(id as i64)]);
+    let job = result(&response);
+    assert_eq!(job.get("id").unwrap().as_i64(), Some(id as i64));
+    assert_eq!(job.get("height").unwrap().as_i64(), Some(4));
+    assert_eq!(job.get("parent").unwrap().as_str().unwrap(), hex(&next.id()));
+    assert_eq!(job.get("transactions").unwrap().as_array().unwrap().len(), 0);
+    assert_eq!(job.get("shares").unwrap().as_array().unwrap().len(), 0);
+    assert_eq!(error_code(&call(rpc.addr, "getjob", vec![Value::Number(id as i64 + 1000)])), -5);
+    assert_eq!(error_code(&call(rpc.addr, "getjob", vec![])), -32602);
+
+    // result code 4 for a job the node does not keep, 1 for a bad submission on a known job
+    assert_eq!(node.accept_submit(id + 1000, &[0u8; 16], T0 + 60 * 4, 1), Err(4));
+    assert_eq!(node.accept_submit(id, &[0u8; 3], T0 + 60 * 4, 1), Err(1));
+    // a session that connects takes the newest job, and ids do not start at 1
+    assert_eq!(node.current_job(demo::MINER_LOCK, T0 + 60 * 4 + 5), Ok(id));
+    assert_ne!(node.current_job(demo::MINER_LOCK, T0 + 60 * 4 + 31), Ok(id), "an old job is replaced");
+    drop(rpc);
+    drop(node);
+    let _ = std::fs::remove_dir_all(&dir);
+}

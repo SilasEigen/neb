@@ -213,9 +213,27 @@ impl Work {
         Work { next_id: 1, extranonce_size: DEFAULT_EXTRANONCE, ..Work::default() }
     }
 
+    /// `new` with a first job id drawn at random, below 2^48: an id of an earlier run of the node then names no job of
+    /// this run.
+    pub fn for_run() -> Work {
+        use std::hash::{BuildHasher, Hasher};
+        let drawn = std::collections::hash_map::RandomState::new().build_hasher().finish();
+        Work { next_id: (drawn >> 16).max(1), ..Work::new() }
+    }
+
     /// The template of job `id` while it is among the newest `KEPT_JOBS`.
     pub fn job(&self, id: u64) -> Option<&Template> {
         self.jobs.get(&id)
+    }
+
+    /// The id of the newest job when it is still the job to work on: its block is a child of `tip` and it was made
+    /// less than `max_age` seconds before `now`. A new session takes it instead of a job of its own, so sessions that
+    /// come and go do not push the jobs of the others out of the `KEPT_JOBS` kept.
+    pub fn current(&self, tip: &[u8; 32], now: u32, max_age: u32) -> Option<u64> {
+        let (id, template) = self.jobs.last_key_value()?;
+        // `expiry` is the creation time plus 300 s
+        let made = template.job.expiry.saturating_sub(300);
+        (template.job.parent == *tip && now.saturating_sub(made) < max_age).then_some(*id)
     }
 
     /// Drops job `id`; its share round is kept.

@@ -193,3 +193,40 @@ pub(crate) fn submitshares(node: &Node, params: &[Value]) -> Result<Value, RpcEr
         Err(e) => Err(RpcError::new(-1, e.to_string())),
     }
 }
+
+/// `getjob id`: what a job of the work service holds besides its Job frame, so that a pool can rebuild the whole
+/// block of a solution and hand it to any node with `submitblock`: the transactions after the coinbase and the share
+/// list, in block order. The coinbase is the one the pool built from the prefix and the suffix of the job. An id that
+/// is not among the jobs the node keeps is an error.
+pub(crate) fn getjob(node: &Node, params: &[Value]) -> Result<Value, RpcError> {
+    let id = params
+        .first()
+        .and_then(Value::as_i64)
+        .and_then(|n| u64::try_from(n).ok())
+        .ok_or_else(|| RpcError::new(-32602, "job id must be an integer"))?;
+    let inner = node.inner.lock().expect("node lock");
+    let template = inner.work.job(id).ok_or_else(|| RpcError::new(-5, "unknown job"))?;
+    let txs = template.txs.iter().skip(1).map(|tx| Value::String(hex(&tx.encode())));
+    let shares = template.shares.iter().map(|r| Value::String(hex(&r.to_bytes())));
+    Ok(object(vec![
+        ("id", Value::Number(id as i64)),
+        ("height", number(template.job.height)),
+        ("parent", Value::String(hex(&template.job.parent))),
+        ("transactions", Value::Array(txs.collect())),
+        ("shares", Value::Array(shares.collect())),
+    ]))
+}
+
+/// `submitblock hex`: a whole block (spec/node.md section 4), checked and connected like a block from a peer, then
+/// announced. The result is the block id. A block the node already has, or that it keeps on a side branch, is not an
+/// error: the result is still its id.
+pub(crate) fn submitblock(node: &Node, params: &[Value]) -> Result<Value, RpcError> {
+    let text = required_str(params, 0, "block hex")?;
+    let bytes = parse_hex(text).ok_or_else(|| RpcError::new(-22, "block is not hex"))?;
+    let block = Block::decode(&bytes).map_err(|e| RpcError::new(-22, format!("decode: {e}")))?;
+    let id = block.id();
+    match node.accept_block(block) {
+        Ok(_) => Ok(Value::String(hex(&id))),
+        Err(e) => Err(RpcError::new(-26, format!("rejected: {e}"))),
+    }
+}

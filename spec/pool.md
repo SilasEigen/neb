@@ -122,7 +122,10 @@ ticket    = the ticket of spec/shares.md section 5.4 (spec/nebhash-v2.md for KEP
    on the job); the ticket, recomputed by the pool, is at most the pool target. A submit that fails gets the error of
    section 8 and counts for nothing.
 5. **Solutions.** An attempt whose ticket is at most the block target is sent to the node with a Submit frame (the
-   job id of the node's job, the extranonce `extranonce1 || extranonce2`, the time, the nonce).
+   job id of the node's job, the extranonce `extranonce1 || extranonce2`, the time, the nonce). A pool that wants to
+   submit through another node as well reads the transactions and the share list of the job with `getjob` when it
+   receives the job, builds the block itself and hands it to any node with `submitblock` (`spec/node.md` section 7.2,
+   from 1.0.4). Result code 4 says that the node no longer keeps the job.
 6. **Chain shares.** For an attempt whose ticket is at most the share target, the pool builds the share record
    `body_root || LE32(time) || LE32(nonce)` (`spec/shares.md` section 11.2) and hands it to its node with the
    JSON-RPC method `submitshares` (`spec/node.md` section 7.2), whose first parameter is the `parent` of the job. A

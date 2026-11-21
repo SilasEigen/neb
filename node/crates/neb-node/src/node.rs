@@ -273,7 +273,7 @@ impl Node {
         let inner = NodeInner {
             state,
             mempool: Mempool::new(),
-            work: Work::new(),
+            work: Work::for_run(),
             store,
             blocks,
             heights,
@@ -688,12 +688,13 @@ impl Node {
 
     /// Rebuilds a block from a work submission and accepts it. The error is a
     /// result code of spec/node.md section 7.1: 1 bad submission, 2 bad header
-    /// (header rule, proof of work or share), 3 bad state. A block that connects
-    /// as a side block is code 3.
+    /// (header rule, proof of work or share), 3 bad state, 4 unknown job. A block
+    /// that connects as a side block is code 3.
     pub fn accept_submit(&self, id: u64, extranonce: &[u8], time: u32, nonce: u32) -> Result<u32, u8> {
         let block = {
             let inner = self.inner.lock().expect("node lock");
-            inner.work.submit(id, extranonce, time, nonce).map_err(|_| 1u8)?
+            let known = inner.work.job(id).is_some();
+            inner.work.submit(id, extranonce, time, nonce).map_err(|_| if known { 1u8 } else { 4u8 })?
         };
         match self.accept_block(block) {
             Ok(BlockOutcome::Connected { height }) => Ok(height),

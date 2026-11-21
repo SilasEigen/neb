@@ -6,8 +6,11 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
-Additions for pools and payout systems. The consensus rules, the protocol version and the genesis are unchanged, and
-the nodes and miners of 1.0.2 work with this version.
+## [1.0.3] - 2026-11-21
+
+An optional release: same protocol, network, genesis and dataset file as 1.0.2, and the nodes and miners of both
+versions work together. It adds calls for pools, exchanges and payout systems, and a payment to several addresses
+in the wallet. Nobody has to upgrade; pool operators and exchanges benefit from it.
 
 - JSON-RPC: `submitshares` hands share records to the node, so a pool no longer needs a peer session with its own
   node to relay the chain shares of its miners (`spec/pool.md` section 7).

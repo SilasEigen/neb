@@ -1,5 +1,5 @@
 //! Library of the `neb-wallet` command: Ed25519 keys in a text file, `neb1...`
-//! addresses, a scan of the best chain for owned outputs, largest-first coin
+//! addresses, a read of the node's unspent outputs for the wallet keys, largest-first coin
 //! selection and transaction signing (spec/node.md sections 5.1 and 5.2).
 //!
 //! The wallet keeps no state besides its key file. It reads blocks and submits
@@ -15,12 +15,14 @@ pub mod display;
 pub mod encryption;
 pub mod payment;
 pub mod rpc;
+pub mod utxos;
 pub mod wallet;
 
 pub use address::{ADDRESS_PREFIX, decode_address, encode_address};
 pub use payment::pay;
 pub use rpc::RpcClient;
+pub use utxos::scan;
 pub use wallet::{
     AmountError, FEE, OwnedUtxo, Scan, SelectError, Selection, Wallet, WalletError, WalletKey, build_payment,
-    build_transaction, format_amount, parse_amount, scan, select,
+    build_transaction, format_amount, parse_amount, replay, select,
 };

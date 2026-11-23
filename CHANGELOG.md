@@ -6,6 +6,12 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+- Wallet: `balance` and `send` read the unspent outputs of the wallet keys with `getutxos`, where they read every
+  block of the chain. Their time no longer grows with the height. Against a node before 1.0.3 the wallet reads the
+  blocks, as before.
+- JSON-RPC: the node serves a call when it arrives. A call on a new connection waited up to 50 ms.
+- Node: after a block of a local miner, a line warns when no peer has completed the handshake.
+
 ## [1.0.4] - 2026-11-21
 
 An optional release for pools: same protocol, network, genesis and dataset file as 1.0.3, and the nodes and miners

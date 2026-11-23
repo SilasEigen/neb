@@ -331,7 +331,7 @@ Parameters and results are listed in `spec/node.md` section 7.2.
 
 ## Wallet
 
-`neb-wallet` keeps one or more Ed25519 secrets in a file, derives the `neb1...` address of each key and scans the node for coins. The file is encrypted with a password unless an empty password was chosen at creation. The default node is `http://127.0.0.1:8432` and the default file is `wallet.txt`. Commands:
+`neb-wallet` keeps one or more Ed25519 secrets in a file, derives the `neb1...` address of each key and asks the node for the unspent outputs of its keys (`getutxos`; a node before 1.0.3 is read block by block). The file is encrypted with a password unless an empty password was chosen at creation. The default node is `http://127.0.0.1:8432` and the default file is `wallet.txt`. Commands:
 
 ```
 neb-wallet --rpc http://127.0.0.1:8432 --wallet wallet.txt new

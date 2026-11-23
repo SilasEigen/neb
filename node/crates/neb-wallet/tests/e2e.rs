@@ -11,7 +11,7 @@ use neb_chain::state::{project_share, subsidy};
 use neb_chain::tx::Transaction;
 use neb_node::params::NetworkParams;
 use neb_node::{Node, NodeConfig};
-use neb_wallet::{FEE, RpcClient, Wallet, build_transaction, scan, select};
+use neb_wallet::{FEE, RpcClient, Wallet, build_transaction, replay, scan, select};
 
 const T0: u32 = 1_700_000_000;
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -57,7 +57,7 @@ fn coinbase_to(height: u32, project_lock: [u8; 32]) -> Transaction {
     demo::coinbase(height, demo::MINER_LOCK, project_lock, reward - project_share(reward))
 }
 
-// The wallet finds its genesis output through getblockhash/getblock, spends
+// The wallet finds its genesis output through getutxos, as a replay of the blocks does, spends
 // part of it with a signature bound to the chain id, and the node accepts the
 // transaction. 101 blocks make the genesis coinbase mature (spec/node.md
 // section 5.3); the balance is the genesis reward less the 5 percent project
@@ -88,6 +88,7 @@ fn wallet_scans_signs_and_submits() {
     let scan = scan(&client, &wallet).expect("scan");
     assert_eq!(scan.tip_height, 101);
     assert_eq!(scan.mature_balance(), 19 * 100_000_000);
+    assert_eq!(scan.utxos, replay(&client, &wallet).expect("replay").utxos);
     let recipient = neb_wallet::address::encode_address("neb", &[0x33; 32]);
     let recipient_lock = neb_wallet::decode_address("neb", &recipient).unwrap();
     let selection = select(&scan.mature(), 5 * 100_000_000, FEE).expect("select");
@@ -236,4 +237,44 @@ fn the_command_line_encrypts_a_new_wallet() {
     assert!(!wrong.status.success());
     assert!(String::from_utf8(wrong.stderr).unwrap().contains("wrong password"));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// A lock with more outputs than one getutxos page: the wallet reads every page, and finds what a replay of
+// the blocks finds. The wallet key is the project key, so each of the 1,100 blocks adds one output.
+#[test]
+fn wallet_reads_a_large_lock_by_pages() {
+    let sk = SigningKey::from_bytes(&[13u8; 32]);
+    let project_lock = Transaction::multisig_lock_data(1, &[sk.verifying_key().to_bytes()]);
+    let dir = temp_dir("pages-node");
+    let wallet_dir = temp_dir("pages-wallet");
+    std::fs::create_dir_all(&wallet_dir).unwrap();
+    let wallet_path = wallet_dir.join("wallet.txt");
+    std::fs::write(&wallet_path, format!("{}\n", sk.to_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>()))
+        .unwrap();
+    let wallet = Wallet::load(&wallet_path).expect("wallet");
+
+    let node = Node::open(NodeConfig {
+        network: network_with_project(demo::MINER_LOCK, project_lock),
+        data_dir: dir.clone(),
+        verify_pow: false,
+    })
+    .expect("node");
+    let mut parent = node.tip_id();
+    for height in 1..=1100 {
+        let block =
+            demo::block(parent, T0 + 60 * height, 0xC280_0000, 5000 + height, vec![coinbase_to(height, project_lock)]);
+        parent = block.id();
+        node.accept_block(block).expect("connect");
+    }
+    let rpc = node.start_rpc("127.0.0.1:0".parse().unwrap()).expect("rpc");
+    let client = RpcClient::new(format!("http://{}", rpc.addr)).expect("client");
+
+    let scan = scan(&client, &wallet).expect("scan");
+    assert_eq!((scan.tip_height, scan.utxos.len()), (1100, 1100));
+    assert_eq!(scan.mature_balance(), 1001 * 100_000_000);
+    assert_eq!(scan.utxos, replay(&client, &wallet).expect("replay").utxos);
+    drop(rpc);
+    drop(node);
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&wallet_dir);
 }

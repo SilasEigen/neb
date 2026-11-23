@@ -418,3 +418,25 @@ fn submitblock_and_getjob() {
     drop(node);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+// A call is served when it arrives: 100 calls in a row, each on its own connection, take well under the
+// 5 s that a 50 ms wait before each accept would cost. Dropping the handle then ends the accept thread.
+#[test]
+fn calls_in_a_row_are_served_without_a_wait() {
+    let sk = SigningKey::from_bytes(&[5u8; 32]);
+    let dir = temp_dir("fast");
+    let node =
+        Node::open(NodeConfig { network: network(lock_of(&sk)), data_dir: dir.clone(), verify_pow: false }).unwrap();
+    let rpc = node.start_rpc("127.0.0.1:0".parse().unwrap()).expect("rpc");
+    let start = std::time::Instant::now();
+    for _ in 0..100 {
+        assert_eq!(result(&call(rpc.addr, "getblockcount", vec![])).as_i64(), Some(0));
+    }
+    let took = start.elapsed();
+    assert!(took < std::time::Duration::from_millis(2500), "100 calls took {took:?}");
+    let addr = rpc.addr;
+    drop(rpc);
+    assert!(TcpStream::connect(addr).is_err(), "the listener is closed once the handle is dropped");
+    drop(node);
+    let _ = std::fs::remove_dir_all(&dir);
+}

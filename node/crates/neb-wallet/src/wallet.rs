@@ -75,7 +75,7 @@ impl From<std::io::Error> for WalletError {
     }
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -336,7 +336,7 @@ impl Scan {
     }
 }
 
-fn hex32(text: &str) -> Option<[u8; 32]> {
+pub(crate) fn hex32(text: &str) -> Option<[u8; 32]> {
     if text.len() != 64 {
         return None;
     }
@@ -353,11 +353,11 @@ fn block_hash(value: &neb_json::Value) -> Result<[u8; 32], WalletError> {
 }
 
 /// Replays the best chain from height 0 to the tip and returns the unspent
-/// outputs of the wallet keys. Costs one `getblockhash` and one `getblock` call
-/// per block. The calls are not atomic: a reorganisation during the scan can
-/// mix blocks of two chains, and the node may then refuse a payment built from
-/// the result.
-pub fn scan(client: &RpcClient, wallet: &Wallet) -> Result<Scan, WalletError> {
+/// outputs of the wallet keys, for a node without `getutxos` (`utxos::scan`
+/// chooses). Costs one `getblockhash` and one `getblock` call per block. The
+/// calls are not atomic: a reorganisation during the scan can mix blocks of
+/// two chains, and the node may then refuse a payment built from the result.
+pub fn replay(client: &RpcClient, wallet: &Wallet) -> Result<Scan, WalletError> {
     let tip_value = client.call("getblockcount", vec![]).map_err(WalletError::Rpc)?;
     let tip_height = tip_value.as_u64().ok_or_else(|| WalletError::Rpc("bad block count".into()))? as u32;
     let mut utxos: BTreeMap<OutPoint, OwnedUtxo> = BTreeMap::new();

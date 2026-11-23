@@ -11,7 +11,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -36,35 +36,53 @@ pub struct RpcHandle {
 impl Drop for RpcHandle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        if let Some(join) = self.join.take() {
+        // The accept thread blocks in `accept`: one connection to the listener wakes it, and it then reads
+        // the flag. When that connection cannot be made the thread is left to end with the process.
+        let woken = TcpStream::connect_timeout(&wake_addr(self.addr), Duration::from_secs(2)).is_ok();
+        if let Some(join) = self.join.take()
+            && woken
+        {
             let _ = join.join();
         }
     }
+}
+
+/// The address that reaches a listener bound to `addr` from this machine: the loopback address of its
+/// family when it is bound to every interface.
+fn wake_addr(addr: SocketAddr) -> SocketAddr {
+    let ip = match addr.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(ip) if ip.is_unspecified() => IpAddr::V6(Ipv6Addr::LOCALHOST),
+        ip => ip,
+    };
+    SocketAddr::new(ip, addr.port())
 }
 
 impl Node {
     /// Starts the RPC listener; the handle stops the accept thread when dropped.
     pub fn start_rpc(&self, addr: SocketAddr) -> io::Result<RpcHandle> {
         let listener = TcpListener::bind(addr)?;
-        listener.set_nonblocking(true)?;
         let local = listener.local_addr()?;
         let node = self.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
         let join = thread::spawn(move || {
-            while !stop2.load(Ordering::Relaxed) {
-                match listener.accept() {
+            // A blocking accept: a call is served as soon as it arrives.
+            loop {
+                let accepted = listener.accept();
+                if stop2.load(Ordering::Relaxed) {
+                    break;
+                }
+                match accepted {
                     Ok((stream, _)) => {
-                        let _ = stream.set_nonblocking(false);
                         let node = node.clone();
                         thread::spawn(move || {
                             let _ = handle_connection(stream, node);
                         });
                     }
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(50));
-                    }
-                    Err(_) => break,
+                    // A connection that ended before it was accepted, or no descriptor left for it:
+                    // the listener still works, so wait a little and accept again.
+                    Err(_) => thread::sleep(Duration::from_millis(50)),
                 }
             }
         });

@@ -22,6 +22,9 @@ use crate::node::{Node, NodeConfig, now};
 use crate::params::{self, Network};
 use crate::style::{ColorMode, Live, Log};
 
+/// Said after a block of a local miner while no peer has completed the handshake.
+const NO_PEER: &str = "WARNING: no peer completed the handshake, this block reached no other node. Blocks mined without a peer stay on this machine and are lost if the network never receives them";
+
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
@@ -493,6 +496,10 @@ fn serve_miner(mut stream: TcpStream, node: Node, log: Arc<Log>, live: Arc<Live>
                                     let tip = hex(&node.tip_id());
                                     let seconds = live.block_seen();
                                     log.block(height, &tip, seconds);
+                                    // A session that never finishes its handshake gets no block.
+                                    if !node.peer_info().iter().any(|peer| peer.handshake) {
+                                        log.note(NO_PEER);
+                                    }
                                     // Connecting the block broadcast a fresh job
                                     // to every session, this one included.
                                     let _ = send(&writer, &ResultMsg { accepted: true, code: 0 }.encode());

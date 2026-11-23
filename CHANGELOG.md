@@ -6,6 +6,11 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+## [1.0.5] - 2026-11-23
+
+An optional release: same protocol, network, genesis and dataset file as 1.0.4, and the nodes and miners of 1.0.2,
+1.0.3, 1.0.4 and 1.0.5 work together. Nobody has to upgrade.
+
 - Wallet: `balance` and `send` read the unspent outputs of the wallet keys with `getutxos`, where they read every
   block of the chain. Their time no longer grows with the height. Against a node before 1.0.3 the wallet reads the
   blocks, as before.

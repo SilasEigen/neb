@@ -2,7 +2,7 @@
 # (pow/ref), the only copy of that code. neb-codec, neb-block and neb-difficulty
 # are consensus primitives; neb-chain holds the rules and builds on them.
 [workspace]
-members = ["crates/neb-codec", "crates/neb-block", "crates/neb-difficulty", "crates/neb-pow", "crates/neb-engines", "crates/neb-chain", "crates/neb-work", "crates/neb-store", "crates/neb-json", "crates/neb-wallet", "crates/neb-node", "crates/neb-cpuminer", "crates/neb-gpuminer"]
+members = ["crates/neb-codec", "crates/neb-block", "crates/neb-difficulty", "crates/neb-pow", "crates/neb-engines", "crates/neb-chain", "crates/neb-work", "crates/neb-store", "crates/neb-json", "crates/neb-wallet", "crates/neb-node", "crates/neb-cpuminer", "crates/neb-gpuminer", "crates/neb-metalminer"]
 resolver = "3"
 
 # Shared by all member crates.

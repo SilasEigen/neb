@@ -19,6 +19,7 @@ runs them with a CUDA kernel that is self-tested against the reference at start 
 the same table, built on the host for each model state and read on the device. In an attempt of the reference the
 cost is the forward and backward passes of 16 samples; in an attempt of the table it is 16 rows read and added, so
 the attempt rates of the two differ by a large factor on the same machine.
+| GPU miner, Apple (`neb-miner-metal`) | the Metal kernel (`node/crates/neb-metalminer/src/neb_share.metal`), one threadgroup per attempt | none | the kernel |
 
 ## Requirements
 
@@ -28,6 +29,7 @@ the attempt rates of the two differ by a large factor on the same machine.
 | K0 (GPU) | NVIDIA GPU of compute capability 7.5 or later, CUDA 13 toolkit to build, driver 580 or later | the GPU miner is not built or does not start |
 | K1, K2 (GPU) | compute capability 8.0 or later (int8 `mma.sync`) | K0 is used on that device, with a message |
 | table (GPU) | the devices of K0, and device memory for the table (about 50 MB for 13,404 transit signals) | the kernel of `nebhash2_cuda.cu` is used on that device, with a message |
+| Metal (Apple GPU) | macOS on Apple silicon, Rust and a C compiler; the kernel source is compiled by the device at start (`newLibraryWithSource:`), so no Xcode and no offline `metal` compiler are needed | `neb-miner-metal` is not built on other platforms |
 
 ## Safeguards
 
@@ -55,6 +57,8 @@ node/target/release/neb-miner-gpu --selftest                                    
 node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../neb-datasets.bin --gpu-kernel k2
 node/target/release/neb-miner-gpu --selftest --dataset ../neb-datasets.bin           # both kernels of the convolutional networks
 node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../neb-datasets.bin --gpu-kernel table
+node/target/release/neb-miner-metal --selftest --dataset ../neb-datasets.bin            # the Apple GPU, K0 in Metal
+node/target/release/neb-miner-metal --node 127.0.0.1:3441 --dataset ../neb-datasets.bin
 ```
 
 ## Numerical range

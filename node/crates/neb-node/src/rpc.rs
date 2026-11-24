@@ -23,8 +23,9 @@ use neb_json::Value;
 use crate::node::Node;
 use crate::rpc_chain;
 
-/// Largest accepted request body and header block, in bytes.
-const MAX_BODY: usize = 1024 * 1024;
+/// Largest accepted request body and header block, in bytes. The body holds a block of the largest size as
+/// hexadecimal text for `submitblock`, and the rest of the call.
+const MAX_BODY: usize = 2 * neb_chain::block::MAX_BLOCK_BYTES + 64 * 1024;
 const MAX_HEADER: usize = 64 * 1024;
 
 pub struct RpcHandle {

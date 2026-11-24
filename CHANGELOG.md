@@ -6,6 +6,16 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+No consensus rule changes: every block valid before is valid now, and the reverse.
+
+- Work service: a job starts at the later of the clock and the median time plus one, where it started at the parent
+  time plus one. On a parent dated ahead of the clock, the first block of the job is no longer past the 120 s limit.
+- Work service: the listener keeps accepting sessions after an accept error, as the JSON-RPC listener does.
+- Work service: a write to a session is limited to 10 s. A session that stopped reading is closed, and no longer
+  holds the job of the other sessions.
+- JSON-RPC: a request body can be about 2 MB, so `submitblock` takes a block of the largest size. The limit was
+  1 MiB, half of such a block as hexadecimal text.
+
 ## [1.0.5] - 2026-11-23
 
 An optional release: same protocol, network, genesis and dataset file as 1.0.4, and the nodes and miners of 1.0.2,

@@ -283,6 +283,15 @@ impl ChainState {
         self.tip().header.time
     }
 
+    /// Median of the times of the last 11 blocks (all of them when fewer
+    /// exist): the element at index n / 2 of the sorted times. A child of the
+    /// tip needs a later time (spec/node.md section 6.1).
+    pub fn median_time(&self) -> u32 {
+        let mut times: Vec<u32> = self.blocks.iter().rev().take(11).map(|b| b.header.time).collect();
+        times.sort_unstable();
+        times[times.len() / 2]
+    }
+
     /// The best chain's UTXO set.
     pub fn utxo(&self, op: &OutPoint) -> Option<&Utxo> {
         self.utxos.get(op)
@@ -366,12 +375,7 @@ impl ChainState {
         if header.bits != want {
             return Err(HeaderError::BadBits);
         }
-        // Median of the last 11 times (all of them when fewer exist): the
-        // element at index n / 2 of the sorted times.
-        let mut times: Vec<u32> = self.blocks.iter().rev().take(11).map(|b| b.header.time).collect();
-        times.sort_unstable();
-        let median = times[times.len() / 2];
-        if header.time <= median {
+        if header.time <= self.median_time() {
             return Err(HeaderError::StaleTime);
         }
         if u64::from(header.time) > u64::from(now) + 120 {

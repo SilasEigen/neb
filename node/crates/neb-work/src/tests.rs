@@ -243,6 +243,31 @@ fn no_job_before_the_start_of_the_chain() {
     assert_eq!(job_wait(&state, T0 + 10), None);
 }
 
+// A tip dated at the future limit of the clock: the job on it starts at the clock, after the median time, so its
+// first block passes both time rules. One second after the tip time would be past the future limit.
+#[test]
+fn a_job_on_a_tip_dated_ahead_starts_at_the_clock() {
+    let mut state = chain_with(&key(9));
+    demo_blocks(&mut state, 10);
+    let now = T0 + 600;
+    let reward = subsidy(11);
+    let ahead = demo::block(
+        state.tip_id(),
+        now + 120,
+        0xC280_0000,
+        111,
+        vec![demo::coinbase(11, demo::MINER_LOCK, demo::PROJECT_LOCK, reward - project_share(reward))],
+    );
+    state.connect_block(&ahead).expect("connect");
+    assert_eq!((state.tip_time(), state.median_time()), (now + 120, T0 + 360));
+    let (mut work, pool) = (Work::new(), Mempool::new());
+    let id = work.make_job(&state, &pool, lock_of(&key(2)), now).expect("job");
+    let job = work.job(id).unwrap().job.clone();
+    assert_eq!(job.time_start, now);
+    let header = job.header(&vec![0u8; job.extranonce_size as usize], job.time_start, 0);
+    assert!(state.check_header(&header, now).is_ok());
+}
+
 // End to end: job, miner-side root, submit, connect, mempool cleanup.
 #[test]
 fn template_submit_roundtrip_connects() {

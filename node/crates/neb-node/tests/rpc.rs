@@ -393,6 +393,8 @@ fn submitblock_and_getjob() {
     assert_eq!(result(&again).as_str().unwrap(), hex(&next.id()));
     assert_eq!(error_code(&call(rpc.addr, "submitblock", vec![Value::String("zz".into())])), -22);
     assert_eq!(error_code(&call(rpc.addr, "submitblock", vec![Value::String("00".into())])), -22);
+    // a call that carries a block of the largest size is read: this one is answered, with the error of its content
+    assert_eq!(error_code(&call(rpc.addr, "submitblock", vec![Value::String("00".repeat(1_000_000))])), -22);
     // a block whose parent the node does not have
     let orphan = demo::block([0x33; 32], T0 + 60 * 9, 0xC280_0000, 4009, vec![coinbase(9)]);
     assert_eq!(error_code(&call(rpc.addr, "submitblock", vec![Value::String(hex(&orphan.encode()))])), -26);

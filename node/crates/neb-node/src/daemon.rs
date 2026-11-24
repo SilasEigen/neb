@@ -6,7 +6,7 @@
 //! The work service and JSON-RPC bind to 127.0.0.1 only: they carry no
 //! authentication. Only the peer listener address is configurable (`--listen`).
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -205,10 +205,9 @@ impl Node {
                         let live = live.clone();
                         std::thread::spawn(move || serve_miner(stream, node, log, live));
                     }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        std::thread::sleep(Duration::from_millis(50));
-                    }
-                    Err(_) => break,
+                    // No session waiting, a connection that ended before it was accepted, or no
+                    // descriptor left for it: the listener still works, so wait a little and accept again.
+                    Err(_) => std::thread::sleep(Duration::from_millis(50)),
                 }
             }
             stop2.store(true, Ordering::Relaxed);
@@ -425,7 +424,7 @@ fn send_job(node: &Node, writer: &MinerWriter, miner_lock: [u8; 32]) -> std::io:
 }
 
 fn send(writer: &MinerWriter, frame: &[u8]) -> std::io::Result<()> {
-    writer.lock().expect("miner writer").write_all(frame)
+    crate::miners::write(writer, frame)
 }
 
 fn serve_miner(mut stream: TcpStream, node: Node, log: Arc<Log>, live: Arc<Live>) {
@@ -438,6 +437,8 @@ fn serve_miner(mut stream: TcpStream, node: Node, log: Arc<Log>, live: Arc<Live>
     };
     live.miner_joined();
     log.miner_joined(&peer);
+    // The clone below shares the socket, so the limit holds for every write to the session.
+    let _ = stream.set_write_timeout(Some(crate::p2p::WRITE_TIMEOUT));
     let writer = match stream.try_clone() {
         Ok(w) => Arc::new(Mutex::new(w)),
         Err(_) => {

@@ -85,7 +85,7 @@ struct PeerEntry {
 
 /// A write to a peer that takes longer ends the session: a peer that stops
 /// reading cannot hold a relaying thread longer than this.
-const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// A peer that has not completed the handshake within this time is dropped.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Slots kept for the outbound connections the node opens itself.

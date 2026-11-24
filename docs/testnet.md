@@ -44,7 +44,7 @@ The node refuses to start when the dataset file does not have the pinned hash. T
 | peer-to-peer port | 3440 |
 | work service port | 3441, loopback only |
 | JSON-RPC port | 8432, loopback only |
-| software version | 1.0.5 with `--testnet`; 0.3.1 was the last release that ran this network by default |
+| software version | 1.0.6 with `--testnet`; 0.3.1 was the last release that ran this network by default |
 | protocol version | 3 (one model per dataset; a node of protocol 2 or 1 does not connect) |
 | network magic | `1db70ba3` (four bytes, hex) |
 | default maximum peers | 8 (`--max-peers`) |
@@ -251,7 +251,7 @@ cargo build --release --locked -p neb-gpuminer --features cuda
 
 ## Mining on HiveOS
 
-The release has a package for the custom miner of HiveOS, `nebminer-1.0.5.tar.gz`, which runs the main network. It holds the node, the wallet, the GPU miner and the dataset file, and the four scripts of the HiveOS interface (`tools/hiveos`). `tools/hiveos-package.sh` builds it. The miner uses every GPU of the rig by itself, so the flight sheet does not choose cards, and an option such as `--devices 0,1` in the extra arguments narrows the choice.
+The release has a package for the custom miner of HiveOS, `nebminer-1.0.6.tar.gz`, which runs the main network. It holds the node, the wallet, the GPU miner and the dataset file, and the four scripts of the HiveOS interface (`tools/hiveos`). `tools/hiveos-package.sh` builds it. The miner uses every GPU of the rig by itself, so the flight sheet does not choose cards, and an option such as `--devices 0,1` in the extra arguments narrows the choice.
 
 Create a flight sheet with a custom miner:
 
@@ -259,7 +259,7 @@ Create a flight sheet with a custom miner:
 |---|---|
 | Miner | Custom |
 | Miner name | `nebminer` |
-| Installation URL | the link of `nebminer-1.0.5.tar.gz` on the release page |
+| Installation URL | the link of `nebminer-1.0.6.tar.gz` on the release page |
 | Hash algorithm | leave empty or choose any |
 | Wallet and worker template | your `neb1...` address (a suffix such as `.%WORKER_NAME%` is ignored) |
 | Pool URL | one or more relays as `HOST:PORT`, separated by spaces |

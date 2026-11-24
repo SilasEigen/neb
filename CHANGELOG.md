@@ -6,7 +6,10 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
-No consensus rule changes: every block valid before is valid now, and the reverse.
+## [1.0.6] - 2026-11-24
+
+An optional release for pools: same protocol, network, genesis and dataset file as 1.0.5, and the nodes and miners
+of 1.0.2 to 1.0.6 work together. Nobody has to upgrade.
 
 - Work service: a job starts at the later of the clock and the median time plus one, where it started at the parent
   time plus one. On a parent dated ahead of the clock, the first block of the job is no longer past the 120 s limit.

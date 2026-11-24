@@ -89,4 +89,4 @@ A share on NEB is bound to the parent block, not to the header (`spec/shares.md`
 - Main network: https://github.com/SilasEigen/neb/blob/main/docs/mainnet.md
 - Running a node and a miner: https://github.com/SilasEigen/neb/blob/main/docs/testnet.md
 - Explorer: https://neuralenginebyte.org/#/explorer
-- Discord: https://discord.gg/B6dTbScw8
+- Discord: https://discord.gg/j8jTM6FKZc

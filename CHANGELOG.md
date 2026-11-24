@@ -6,6 +6,20 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+## [1.0.7] - 2026-11-24
+
+Same protocol, network, genesis and dataset file as 1.0.6, and the nodes and miners of 1.0.2 to 1.0.7 work together.
+Node and pool operators should upgrade.
+
+- Peers: the frames for a peer wait in a queue of that peer, written by a thread of its own. A relay to all peers
+  returns at once, where it wrote to them in turn: one peer that reads slowly no longer delays the others, nor the
+  result sent to the miner of a block. While more than 2 MiB wait for a peer the node reads nothing more from it; a
+  peer that takes nothing for 10 s is disconnected.
+- Peers: the node answers a relayed block whose parent it lacks with `getblocks` to its sender, at most once for
+  each tip of its own chain. It did so only for a block sent unasked, so after two blocks at one height a node could
+  stay on the lighter branch until a new session.
+- Work service: a result or a job leaves at once (`TCP_NODELAY` on the sessions).
+
 ## [1.0.6] - 2026-11-24
 
 An optional release for pools: same protocol, network, genesis and dataset file as 1.0.5, and the nodes and miners

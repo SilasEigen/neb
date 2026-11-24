@@ -1,4 +1,5 @@
 use super::*;
+use std::io::Write;
 
 fn pair() -> (TcpStream, TcpStream) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -29,26 +30,10 @@ fn a_timeout_inside_a_message_is_not_idle() {
     assert_eq!(read_message(&mut server, magic).unwrap().unwrap().command, CMD_PING);
 }
 
-// A write that times out shuts the socket down: the next write fails at once instead of waiting again.
-#[test]
-fn a_write_that_times_out_ends_the_session() {
-    let (client, server) = pair();
-    client.set_write_timeout(Some(Duration::from_millis(200))).unwrap();
-    let writer = Arc::new(Mutex::new(client));
-    // the server never reads: the socket buffers fill up and a write times out
-    let chunk = vec![0u8; 1 << 20];
-    let fills = (0..1024).position(|_| write_all(&writer, &chunk).is_err());
-    assert!(fills.is_some(), "1 GiB written to a peer that never reads");
-    let t = Instant::now();
-    assert!(write_all(&writer, &[0u8; 16]).is_err());
-    assert!(t.elapsed() < Duration::from_millis(150), "the second write waited {:?}", t.elapsed());
-    drop(server);
-}
-
 // Inbound sessions leave room for outbound ones and are capped per address; loopback is not capped.
 #[test]
 fn inbound_peers_leave_room_for_outbound_and_are_capped_per_address() {
-    let writer = || Arc::new(Mutex::new(pair().0));
+    let writer = || Outbox::start(pair().0, WRITE_TIMEOUT).unwrap();
     let at = |a: &str| a.parse::<SocketAddr>().unwrap();
     let set = PeerSet::new(4);
     assert!(set.add(at("10.0.0.1:1"), true, writer()).is_some());

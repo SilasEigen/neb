@@ -169,6 +169,193 @@ fn a_longer_branch_replaces_the_tip() {
     let _ = std::fs::remove_dir_all(&dir_b);
 }
 
+// A relayed block whose parent the node lacks: the node asks its sender for the missing blocks. After a race, A and B
+// are connected on the same tip; A then takes the other branch, whose first block it did not announce (a side block
+// is not), and relays only the new tip.
+#[test]
+fn a_relayed_block_without_its_parent_brings_the_missing_blocks() {
+    let dir_a = temp_dir("orphan-a");
+    let dir_b = temp_dir("orphan-b");
+    let a = open(&dir_a);
+    let b = open(&dir_b);
+    let mut blocks = prefix_blocks(2);
+    blocks.push(demo::block(blocks[1].id(), T0 + 180, 0xC280_0000, 30_003, vec![coinbase(3)]));
+    for block in &blocks {
+        a.accept_block(block.clone()).expect("a");
+        b.accept_block(block.clone()).expect("b");
+    }
+    let handle = a.start_p2p("127.0.0.1:0".parse().unwrap()).expect("listen");
+    b.connect_peer(handle.addr).expect("connect");
+    assert!(wait_for(|| a.peer_info().iter().any(|p| p.handshake) && b.peer_info().iter().any(|p| p.handshake), 15));
+    // the handshake asks for blocks once: let that exchange end, so that only the relay below can bring the branch
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(b.tip_id(), blocks[2].id());
+
+    let other3 = demo::block(blocks[1].id(), T0 + 181, 0xC280_0000, 40_003, vec![coinbase(3)]);
+    let other4 = demo::block(other3.id(), T0 + 240, 0xC280_0000, 40_004, vec![coinbase(4)]);
+    a.accept_block(other3).expect("side block");
+    assert_eq!(a.tip_id(), blocks[2].id(), "equal work keeps the tip");
+    a.accept_block(other4.clone()).expect("heavier branch");
+    assert_eq!(a.tip_id(), other4.id());
+    assert!(wait_for(|| b.tip_id() == other4.id(), 15), "B did not fetch the parent of the relayed block");
+    assert_eq!(b.height(), 4);
+    drop(handle);
+    drop(a);
+    drop(b);
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+// A peer that asks for headers in a loop and reads no answer does not delay the relay of a block to another peer.
+#[test]
+fn a_peer_that_reads_nothing_does_not_delay_the_relay_of_a_block() {
+    use neb_node::p2p::encode_message;
+    use std::io::Write;
+    let dir_a = temp_dir("stall-a");
+    let dir_b = temp_dir("stall-b");
+    let a = open(&dir_a);
+    let b = open(&dir_b);
+    let blocks = prefix_blocks(40);
+    for block in &blocks {
+        a.accept_block(block.clone()).expect("a");
+        b.accept_block(block.clone()).expect("b");
+    }
+    let handle = a.start_p2p("127.0.0.1:0".parse().unwrap()).expect("listen");
+
+    // the first session of A: a version, a verack, then getheaders from the genesis block without end
+    let magic = test_network().magic;
+    let genesis = demo::genesis(T0).id();
+    let mut version = Vec::new();
+    version.extend_from_slice(&1u32.to_le_bytes());
+    version.extend_from_slice(&0u32.to_le_bytes());
+    version.extend_from_slice(&7u64.to_le_bytes());
+    version.extend_from_slice(&genesis);
+    version.extend_from_slice(&0u16.to_le_bytes());
+    version.push(0);
+    let mut locator = vec![1u8];
+    locator.extend_from_slice(&genesis);
+    let mut silent = std::net::TcpStream::connect(handle.addr).expect("dial");
+    silent.write_all(&encode_message(magic, "version", &version).unwrap()).unwrap();
+    silent.write_all(&encode_message(magic, "verack", &[]).unwrap()).unwrap();
+    let ask = encode_message(magic, "getheaders", &locator).unwrap();
+    let flood = std::thread::spawn(move || while silent.write_all(&ask).is_ok() {});
+    assert!(wait_for(|| a.peer_info().iter().any(|p| p.handshake), 15));
+
+    b.connect_peer(handle.addr).expect("connect");
+    assert!(wait_for(|| a.peer_info().iter().filter(|p| p.handshake).count() == 2, 15));
+    // long enough for the answers to fill the socket of the silent peer and for its session to be held
+    std::thread::sleep(Duration::from_secs(2));
+
+    let next = demo::block(blocks[39].id(), T0 + 60 * 41, 0xC280_0000, 1041, vec![coinbase(41)]);
+    let sent = Instant::now();
+    a.accept_block(next.clone()).expect("block 41");
+    assert!(sent.elapsed() < Duration::from_millis(500), "accepting the block waited {:?}", sent.elapsed());
+    assert!(wait_for(|| b.tip_id() == next.id(), 2), "the block reached B after more than 2 s");
+    drop(handle);
+    drop(a);
+    drop(b);
+    let _ = flood.join();
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+// A relay with 200 peers that read and 5 that ask without end and read nothing: 30 blocks in a row reach every
+// reading peer, and no block makes the node wait.
+#[test]
+fn a_relay_with_many_peers_delivers_every_block() {
+    use neb_node::p2p::encode_message;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicUsize;
+    const READERS: usize = 200;
+    const BLOCKS: u32 = 30;
+    let dir = temp_dir("load");
+    let mut network = test_network();
+    network.max_peers = 300;
+    let a = Node::open(NodeConfig { network, data_dir: dir.clone(), verify_pow: false }).expect("node");
+    let blocks = prefix_blocks(40);
+    for block in &blocks {
+        a.accept_block(block.clone()).expect("a");
+    }
+    let handle = a.start_p2p("127.0.0.1:0".parse().unwrap()).expect("listen");
+    let magic = test_network().magic;
+    let genesis = demo::genesis(T0).id();
+    let hello = |nonce: u64| {
+        let mut version = Vec::new();
+        version.extend_from_slice(&1u32.to_le_bytes());
+        version.extend_from_slice(&40u32.to_le_bytes());
+        version.extend_from_slice(&nonce.to_le_bytes());
+        version.extend_from_slice(&genesis);
+        version.extend_from_slice(&0u16.to_le_bytes());
+        version.push(0);
+        let mut stream = TcpStream::connect(handle.addr).expect("dial");
+        stream.write_all(&encode_message(magic, "version", &version).unwrap()).unwrap();
+        stream.write_all(&encode_message(magic, "verack", &[]).unwrap()).unwrap();
+        stream
+    };
+
+    let mut locator = vec![1u8];
+    locator.extend_from_slice(&genesis);
+    let ask = encode_message(magic, "getheaders", &locator).unwrap();
+    // a second handle on every socket, to close them at the end
+    let mut sockets = Vec::new();
+    let floods: Vec<_> = (0..5u64)
+        .map(|i| {
+            let (mut silent, ask) = (hello(1000 + i), ask.clone());
+            sockets.push(silent.try_clone().unwrap());
+            std::thread::spawn(move || while silent.write_all(&ask).is_ok() {})
+        })
+        .collect();
+
+    // each reading peer counts the block announcements it receives
+    let announced: Vec<Arc<AtomicUsize>> = (0..READERS).map(|_| Arc::new(AtomicUsize::new(0))).collect();
+    let readers: Vec<_> = (0..READERS)
+        .map(|i| {
+            let (mut stream, count) = (hello(i as u64 + 1), announced[i].clone());
+            sockets.push(stream.try_clone().unwrap());
+            std::thread::spawn(move || {
+                let mut header = [0u8; 24];
+                while stream.read_exact(&mut header).is_ok() {
+                    let mut payload = vec![0u8; u32::from_le_bytes(header[16..20].try_into().unwrap()) as usize];
+                    if stream.read_exact(&mut payload).is_err() {
+                        break;
+                    }
+                    if &header[4..8] == b"inv " && payload.len() == 34 {
+                        count.fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            })
+        })
+        .collect();
+    assert!(wait_for(|| a.peer_info().iter().filter(|p| p.handshake).count() == READERS + 5, 30), "handshakes");
+    std::thread::sleep(Duration::from_secs(2));
+
+    let mut parent = blocks[39].id();
+    let mut slowest = Duration::ZERO;
+    for height in 41..41 + BLOCKS {
+        let block = demo::block(parent, T0 + 60 * height, 0xC280_0000, 1000 + height, vec![coinbase(height)]);
+        parent = block.id();
+        let t = Instant::now();
+        a.accept_block(block).expect("block");
+        slowest = slowest.max(t.elapsed());
+    }
+    assert!(slowest < Duration::from_millis(500), "one block made the node wait {slowest:?}");
+    let all = || announced.iter().all(|c| c.load(Ordering::Relaxed) == BLOCKS as usize);
+    let got = wait_for(all, 10);
+    let short = announced.iter().filter(|c| c.load(Ordering::Relaxed) != BLOCKS as usize).count();
+    assert!(got, "{short} of {READERS} reading peers did not get the {BLOCKS} announcements");
+    for socket in &sockets {
+        let _ = socket.shutdown(std::net::Shutdown::Both);
+    }
+    drop(handle);
+    drop(a);
+    for t in floods.into_iter().chain(readers) {
+        let _ = t.join();
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // The block log replays to the same height.
 #[test]
 fn the_chain_survives_a_restart() {

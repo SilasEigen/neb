@@ -437,6 +437,8 @@ fn serve_miner(mut stream: TcpStream, node: Node, log: Arc<Log>, live: Arc<Live>
     };
     live.miner_joined();
     log.miner_joined(&peer);
+    // A result or a job is one small frame: it leaves at once, without waiting to be grouped with the next.
+    let _ = stream.set_nodelay(true);
     // The clone below shares the socket, so the limit holds for every write to the session.
     let _ = stream.set_write_timeout(Some(crate::p2p::WRITE_TIMEOUT));
     let writer = match stream.try_clone() {

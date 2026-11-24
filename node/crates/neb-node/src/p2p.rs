@@ -21,7 +21,7 @@
 //! address is not banned: its session ends and it may connect again.
 
 use std::collections::BTreeMap;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -37,6 +37,9 @@ use neb_codec::{Reader, write_varint};
 use crate::addrbook::{encode_addr, parse_addr};
 use crate::budget::TokenBucket;
 use crate::node::{BlockOutcome, InvKind, Node, NodeError};
+
+mod outbox;
+use outbox::Outbox;
 
 /// Maximum payload of a message in bytes (spec/node.md section 8.2).
 pub const MAX_PAYLOAD: usize = 2 * 1024 * 1024;
@@ -74,17 +77,17 @@ pub struct PeerInfo {
     pub handshake: bool,
 }
 
-/// One connected session. The writer is shared so that relays from other
-/// threads and the session thread do not interleave frames.
+/// One connected session. Relays from other threads and the session thread
+/// add whole frames to the queue of the writer, so frames do not interleave.
 struct PeerEntry {
     info: PeerInfo,
-    writer: Arc<Mutex<TcpStream>>,
+    writer: Arc<Outbox>,
     started: Instant,
     ip: std::net::IpAddr,
 }
 
-/// A write to a peer that takes longer ends the session: a peer that stops
-/// reading cannot hold a relaying thread longer than this.
+/// A write to a peer that makes no progress for this long ends the session.
+/// The work service uses the same limit for its sessions.
 pub(crate) const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// A peer that has not completed the handshake within this time is dropped.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -95,8 +98,7 @@ const MAX_INBOUND_PER_IP: usize = 2;
 
 /// The connected sessions, at most `limit`; a session beyond the limit is
 /// closed at once. Inbound sessions may use all but `OUTBOUND_RESERVED` slots,
-/// at most `MAX_INBOUND_PER_IP` from one address. Never held while writing:
-/// `broadcast` copies the writers out.
+/// at most `MAX_INBOUND_PER_IP` from one address.
 pub struct PeerSet {
     limit: usize,
     next_id: AtomicU64,
@@ -108,7 +110,7 @@ impl PeerSet {
         PeerSet { limit, next_id: AtomicU64::new(1), peers: Mutex::new(BTreeMap::new()) }
     }
 
-    fn add(&self, peer: SocketAddr, inbound: bool, writer: Arc<Mutex<TcpStream>>) -> Option<u64> {
+    fn add(&self, peer: SocketAddr, inbound: bool, writer: Arc<Outbox>) -> Option<u64> {
         let mut peers = self.peers.lock().expect("peer lock");
         if peers.len() >= self.limit {
             return None;
@@ -180,28 +182,21 @@ impl PeerSet {
         out
     }
 
+    /// Queues one frame for every session but `except` and returns at once:
+    /// no peer can delay the relay to the others.
     pub(crate) fn broadcast(&self, frame: &[u8], except: Option<u64>) {
-        let writers: Vec<Arc<Mutex<TcpStream>>> = {
-            let peers = self.peers.lock().expect("peer lock");
-            peers.iter().filter(|(id, _)| Some(**id) != except).map(|(_, e)| e.writer.clone()).collect()
-        };
-        for writer in writers {
-            let _ = write_all(&writer, frame);
+        let frame: Arc<[u8]> = frame.into();
+        let peers = self.peers.lock().expect("peer lock");
+        for (_, entry) in peers.iter().filter(|(id, _)| Some(**id) != except) {
+            let _ = entry.writer.relay(&frame);
         }
     }
 }
 
-/// Writes one frame. A write that fails or exceeds `WRITE_TIMEOUT` shuts the
-/// socket down, which ends the session, so later writes to it fail at once.
-// ponytail: one blocking write per peer on the caller's thread; a per-peer queue with its own writer thread removes
-// even the single WRITE_TIMEOUT wait when many peers stall at once.
-fn write_all(writer: &Arc<Mutex<TcpStream>>, frame: &[u8]) -> io::Result<()> {
-    let mut stream = writer.lock().expect("peer writer");
-    let result = stream.write_all(frame).and_then(|()| stream.flush());
-    if result.is_err() {
-        let _ = stream.shutdown(std::net::Shutdown::Both);
-    }
-    result
+/// Queues one frame of a session for its peer; waits while the queue of that
+/// peer is full, and fails when the peer is closed (see `outbox`).
+fn write_all(writer: &Arc<Outbox>, frame: &[u8]) -> io::Result<()> {
+    writer.send(frame)
 }
 
 fn command_bytes(command: &str) -> Result<[u8; 12], String> {
@@ -519,7 +514,7 @@ impl Node {
 }
 
 /// Sends `getblocks` with the locator of the best chain.
-fn send_getblocks(node: &Node, writer: &Arc<Mutex<TcpStream>>) {
+fn send_getblocks(node: &Node, writer: &Arc<Outbox>) {
     let magic = node.network().magic;
     if let Ok(frame) = encode_message(magic, CMD_GETBLOCKS, &locator_payload(&node.locator())) {
         let _ = write_all(writer, &frame);
@@ -529,11 +524,11 @@ fn send_getblocks(node: &Node, writer: &Arc<Mutex<TcpStream>>) {
 fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, probe: bool, peer_addr: SocketAddr) {
     let _ = stream.set_nodelay(true);
     let _ = stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT));
-    let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
-    let writer = match stream.try_clone() {
-        Ok(s) => Arc::new(Mutex::new(s)),
-        Err(_) => return,
+    let Ok(writer) = stream.try_clone().and_then(|s| Outbox::start(s, WRITE_TIMEOUT)) else {
+        return;
     };
+    // Ends the writer on every way out of this function, so its thread and its socket never outlive the session.
+    let _ending = Ending(writer.clone());
     let Some(peer_id) = node.peers.add(peer_addr, inbound, writer.clone()) else {
         return;
     };
@@ -557,6 +552,8 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, probe: bool, pee
     // `getdata`; its arrival triggers the next `getblocks`.
     let mut handshake_done = false;
     let mut batch_last: Option<[u8; 32]> = None;
+    // The tip of this node when it last answered a block without a known parent.
+    let mut orphan_tip: Option<[u8; 32]> = None;
     let mut their_version: Option<VersionMsg> = None;
     let mut budget = TokenBucket::new(node.pow_budget, Instant::now());
     // True from a keep-alive ping until the next message of any kind.
@@ -721,8 +718,16 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, probe: bool, pee
                         node.bans.ban(peer_addr.ip());
                         break 'session;
                     }
-                    // An unsolicited orphan means the peer is ahead: resync once.
-                    Err(NodeError::Orphan) => ask_more = !solicited && batch_last.is_none(),
+                    // The parent is unknown: the peer has blocks this node lacks, whether it
+                    // relayed this one or sent it unasked. Ask for them, once per tip of this
+                    // node, and not in the middle of a requested batch.
+                    Err(NodeError::Orphan) => {
+                        let tip = node.tip_id();
+                        if batch_last.is_none() && orphan_tip != Some(tip) {
+                            orphan_tip = Some(tip);
+                            ask_more = true;
+                        }
+                    }
                     Err(_) => {}
                 }
                 if ask_more {
@@ -770,6 +775,14 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, probe: bool, pee
         }
     }
     node.peers.remove(peer_id);
+}
+
+struct Ending(Arc<Outbox>);
+
+impl Drop for Ending {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
 }
 
 #[cfg(test)]

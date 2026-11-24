@@ -153,7 +153,8 @@ Warning flags (`candidate.py`):
    P, above 97%). Ellipsoidal light at P/2 is the sign of an eclipsing binary.
 
 An eclipsing binary, grazing or blended within 2 arcsec, is not excluded. The vetting sheet is
-`results/candidate-kic-006691030.png`.
+`results/candidate-kic-006691030.png`. A four-page technical note on the candidate is archived on Zenodo:
+[doi:10.5281/zenodo.24497259](https://doi.org/10.5281/zenodo.24497259).
 
 Later checks:
 

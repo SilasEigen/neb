@@ -19,7 +19,7 @@ runs them with a CUDA kernel that is self-tested against the reference at start 
 the same table, built on the host for each model state and read on the device. In an attempt of the reference the
 cost is the forward and backward passes of 16 samples; in an attempt of the table it is 16 rows read and added, so
 the attempt rates of the two differ by a large factor on the same machine.
-| GPU miner, Apple (`neb-miner-metal`) | the Metal kernel (`node/crates/neb-metalminer/src/neb_share.metal`), one threadgroup per attempt | none | the kernel |
+| GPU miner, Apple (`neb-miner-metal`) | the Metal kernels (`node/crates/neb-metalminer/src/neb_share.metal` and `neb_share2.metal` for nebhash v2), one threadgroup per attempt | none | the kernel |
 
 ## Requirements
 
@@ -57,7 +57,7 @@ node/target/release/neb-miner-gpu --selftest                                    
 node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../neb-datasets.bin --gpu-kernel k2
 node/target/release/neb-miner-gpu --selftest --dataset ../neb-datasets.bin           # both kernels of the convolutional networks
 node/target/release/neb-miner-gpu --node 127.0.0.1:3441 --dataset ../neb-datasets.bin --gpu-kernel table
-node/target/release/neb-miner-metal --selftest --dataset ../neb-datasets.bin            # the Apple GPU, K0 in Metal
+node/target/release/neb-miner-metal --selftest --dataset ../neb-datasets.bin            # the Apple GPU, every slot
 node/target/release/neb-miner-metal --node 127.0.0.1:3441 --dataset ../neb-datasets.bin
 ```
 

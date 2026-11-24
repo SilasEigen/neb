@@ -17,6 +17,9 @@
 #define NEB_NW (NEB_NIN / 4)
 #define NEB_RECORD_WORDS (8 + 8 + 16)
 #define NEB_THREADS 256
+// Attempts of one dispatch of the nebhash v2 kernel: it keeps the inputs and the errors of every layer of every
+// attempt in a scratch area of device memory, so the batch is cut to what the scratch holds.
+#define NEB_SCRATCH_ATTEMPTS 512
 
 typedef struct NebMetal NebMetal;
 void neb_metal_free(NebMetal *g);
@@ -27,7 +30,13 @@ struct NebMetal {
   id<MTLComputePipelineState> pipeline;
   id<MTLBuffer> w1t;   // NEB_NW * NEB_NH * 4 bytes, char4 at w * NH + h
   id<MTLBuffer> w2;    // NEB_NOUT * NEB_NH bytes
-  id<MTLBuffer> data;  // n * NIN pixels
+  id<MTLBuffer> w;     // nebhash v2: the weights in model order
+  id<MTLBuffer> scratch; // nebhash v2: block_bytes per attempt of a dispatch
+  id<MTLBuffer> plan;  // nebhash v2: the layer table and the scratch layout
+  uint32_t nin;        // values per sample
+  uint32_t nweights;   // nebhash v2 only; 0 for the 784-128-10 kernel
+  uint32_t sub;        // attempts per dispatch of the v2 kernel
+  id<MTLBuffer> data;  // n * nin pixels
   id<MTLBuffer> labels;
   id<MTLBuffer> hdr;   // 20 words
   id<MTLBuffer> out;   // max_batch * RECORD_WORDS words
@@ -46,7 +55,10 @@ static id<MTLBuffer> make_buffer(id<MTLDevice> device, const void *bytes, size_t
   return [device newBufferWithBytes:bytes length:length options:MTLResourceStorageModeShared];
 }
 
+// `plan` is NULL for the 784-128-10 kernel (neb_share); for nebhash v2 it is the Plan of neb_share2.metal (`plan_bytes`
+// long), with `nin` values per sample, `nweights` weights and `block_bytes` of scratch per attempt.
 NebMetal *neb_metal_new(const char *msl_source, const void *pixels, const void *labels, uint32_t n, uint32_t max_batch,
+                        uint32_t nin, const void *plan, size_t plan_bytes, uint32_t nweights, uint32_t block_bytes,
                         char *err, size_t errcap) {
   if (n == 0 || max_batch == 0) {
     set_error(err, errcap, @"the dataset is empty or the batch is zero");
@@ -65,6 +77,9 @@ NebMetal *neb_metal_new(const char *msl_source, const void *pixels, const void *
   g->device = device; // owned by the create rule
   g->n = n;
   g->max_batch = max_batch;
+  g->nin = nin;
+  g->nweights = plan ? nweights : 0;
+  g->sub = max_batch < NEB_SCRATCH_ATTEMPTS ? max_batch : NEB_SCRATCH_ATTEMPTS;
   snprintf(g->name, sizeof g->name, "%s", [[device name] UTF8String]);
 
   NSError *e = nil;
@@ -80,9 +95,9 @@ NebMetal *neb_metal_new(const char *msl_source, const void *pixels, const void *
     neb_metal_free(g);
     return NULL;
   }
-  id<MTLFunction> fn = [library newFunctionWithName:@"neb_share"];
+  id<MTLFunction> fn = [library newFunctionWithName:plan ? @"neb_share2" : @"neb_share"];
   if (!fn) {
-    set_error(err, errcap, @"the kernel neb_share is missing");
+    set_error(err, errcap, @"the kernel is missing from the source");
     neb_metal_free(g);
     return NULL;
   }
@@ -102,13 +117,24 @@ NebMetal *neb_metal_new(const char *msl_source, const void *pixels, const void *
     return NULL;
   }
   g->queue = [device newCommandQueue];
-  g->data = make_buffer(device, pixels, (size_t)n * NEB_NIN);
+  g->data = make_buffer(device, pixels, (size_t)n * nin);
   g->labels = make_buffer(device, labels, n);
   g->hdr = make_buffer(device, pixels, 80);  // overwritten by every scan
   g->out = [device newBufferWithLength:(size_t)max_batch * NEB_RECORD_WORDS * 4 options:MTLResourceStorageModeShared];
-  g->w1t = [device newBufferWithLength:(size_t)NEB_NW * NEB_NH * 4 options:MTLResourceStorageModeShared];
-  g->w2 = [device newBufferWithLength:(size_t)NEB_NOUT * NEB_NH options:MTLResourceStorageModeShared];
-  if (!g->data || !g->labels || !g->hdr || !g->out || !g->w1t || !g->w2) {
+  if (plan) {
+    g->plan = make_buffer(device, plan, plan_bytes);
+    g->w = [device newBufferWithLength:nweights options:MTLResourceStorageModeShared];
+    g->scratch = [device newBufferWithLength:(size_t)g->sub * block_bytes options:MTLResourceStorageModeShared];
+    if (!g->plan || !g->w || !g->scratch) {
+      set_error(err, errcap, @"cannot allocate the device buffers");
+      neb_metal_free(g);
+      return NULL;
+    }
+  } else {
+    g->w1t = [device newBufferWithLength:(size_t)NEB_NW * NEB_NH * 4 options:MTLResourceStorageModeShared];
+    g->w2 = [device newBufferWithLength:(size_t)NEB_NOUT * NEB_NH options:MTLResourceStorageModeShared];
+  }
+  if (!g->data || !g->labels || !g->hdr || !g->out || (!plan && (!g->w1t || !g->w2))) {
     set_error(err, errcap, @"cannot allocate the device buffers");
     neb_metal_free(g);
     return NULL;
@@ -120,6 +146,9 @@ void neb_metal_free(NebMetal *g) {
   if (!g) return;
   [g->w1t release];
   [g->w2 release];
+  [g->w release];
+  [g->scratch release];
+  [g->plan release];
   [g->data release];
   [g->labels release];
   [g->hdr release];
@@ -154,6 +183,16 @@ bool neb_metal_set_model(NebMetal *g, const int8_t *w1, const int8_t *w2, char *
   return true;
 }
 
+// The weights of the job of a nebhash v2 engine, in model order (one signed byte each).
+bool neb_metal_set_weights(NebMetal *g, const int8_t *w, char *err, size_t errcap) {
+  if (!g || !g->w) {
+    set_error(err, errcap, @"this engine has no nebhash v2 kernel");
+    return false;
+  }
+  memcpy([g->w contents], w, g->nweights);
+  return true;
+}
+
 // One batch: attempt `nonce_base + i` for i in 0 .. count-1, on the header `hdr` (20 words, nonce word zero).
 // The results are in neb_metal_out: RECORD_WORDS words per attempt.
 bool neb_metal_scan(NebMetal *g, const uint32_t *hdr, uint32_t nonce_base, uint32_t count, uint32_t key_mode, char *err,
@@ -175,14 +214,31 @@ bool neb_metal_scan(NebMetal *g, const uint32_t *hdr, uint32_t nonce_base, uint3
     id<MTLCommandBuffer> cb = [g->queue commandBuffer];
     id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
     [enc setComputePipelineState:g->pipeline];
-    [enc setBuffer:g->hdr offset:0 atIndex:0];
-    [enc setBuffer:g->w1t offset:0 atIndex:1];
-    [enc setBuffer:g->w2 offset:0 atIndex:2];
-    [enc setBuffer:g->data offset:0 atIndex:3];
-    [enc setBuffer:g->labels offset:0 atIndex:4];
-    [enc setBuffer:g->out offset:0 atIndex:5];
-    [enc setBytes:&params length:sizeof params atIndex:6];
-    [enc dispatchThreadgroups:MTLSizeMake(count, 1, 1) threadsPerThreadgroup:MTLSizeMake(NEB_THREADS, 1, 1)];
+    if (g->plan) {
+      // nebhash v2: pieces of `sub` attempts, each on the scratch area (the dispatches of one encoder run in order)
+      for (uint32_t done = 0; done < count; done += g->sub) {
+        const uint32_t part = count - done < g->sub ? count - done : g->sub;
+        params.nonce_base = nonce_base + done;
+        [enc setBuffer:g->hdr offset:0 atIndex:0];
+        [enc setBuffer:g->w offset:0 atIndex:1];
+        [enc setBuffer:g->data offset:0 atIndex:2];
+        [enc setBuffer:g->labels offset:0 atIndex:3];
+        [enc setBuffer:g->scratch offset:0 atIndex:4];
+        [enc setBuffer:g->out offset:(size_t)done * NEB_RECORD_WORDS * 4 atIndex:5];
+        [enc setBytes:&params length:sizeof params atIndex:6];
+        [enc setBuffer:g->plan offset:0 atIndex:7];
+        [enc dispatchThreadgroups:MTLSizeMake(part, 1, 1) threadsPerThreadgroup:MTLSizeMake(NEB_THREADS, 1, 1)];
+      }
+    } else {
+      [enc setBuffer:g->hdr offset:0 atIndex:0];
+      [enc setBuffer:g->w1t offset:0 atIndex:1];
+      [enc setBuffer:g->w2 offset:0 atIndex:2];
+      [enc setBuffer:g->data offset:0 atIndex:3];
+      [enc setBuffer:g->labels offset:0 atIndex:4];
+      [enc setBuffer:g->out offset:0 atIndex:5];
+      [enc setBytes:&params length:sizeof params atIndex:6];
+      [enc dispatchThreadgroups:MTLSizeMake(count, 1, 1) threadsPerThreadgroup:MTLSizeMake(NEB_THREADS, 1, 1)];
+    }
     [enc endEncoding];
     [cb commit];
     [cb waitUntilCompleted];

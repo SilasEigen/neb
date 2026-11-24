@@ -1,6 +1,6 @@
 [package]
 name = "neb-metalminer"
-description = "Metal (Apple GPU) miner of the NEB testnet: the share attempt of spec/shares.md on Apple silicon, checked against the C reference"
+description = "Metal (Apple GPU) miner of the NEB main network: the share attempt of spec/shares.md on Apple silicon, checked against the C reference"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

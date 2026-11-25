@@ -37,6 +37,30 @@ A Proof-of-Useful-Work training algorithm faces four adversarial GPU-kernel shor
   commits to every unshifted `int32` inner product (`z_base`, `z_a`) and expert index `e_l`. Any single-LSB
   approximation or skipped computation triggers a 50% bit-flip avalanche in `ticket`.
 
+## 1.1 Real-World Utility: Verifiable Intelligence Cartridges & Dual-Slot Specialization
+
+In `nebhash v1/v2`, trained weights (11–50 KB) belong to standalone toy networks with no external ecosystem tooling.
+By anchoring `nebhash v3` to a widely deployed Apache-2.0 foundation model (**Qwen3-8B**), every on-chain model step
+produces a **portable, plug-and-play LoRA adapter ("Intelligence Cartridge")** with three concrete properties:
+
+1. **Immediate Ecosystem Usability (HuggingFace / GGUF / vLLM Export)**: Any node can deterministically dequantize
+   the `~97 KiB` on-chain LoRA state at any block height into standard LoRA adapter files and attach them directly to
+   a local `Qwen3-8B` instance—turning Proof-of-Work electricity into usable, open-access specialist models.
+2. **Cryptographically Verifiable, Zero-Poisoning Provenance**: Centralized fine-tuning offers no public proof against
+   silent gradient manipulation or backdoor injection. In `nebhash v3`, every weight transition from the initial seed
+   is deterministically reproducible bit-for-bit from block headers, sample indices, key-derived dropout masks, and
+   exact integer gradients.
+3. **Dual-Slot Public-Good & Domain Specialization** (extending NEB's multi-slot design):
+   - **Slot 0 — Security & Formal Code Auditing**: Fine-tuning `Qwen3-8B` representations on curated vulnerability
+     corpora (smart-contract exploits, memory-safety bugs, malicious transaction patterns) to maintain a continuously
+     improving, open-source security auditor.
+   - **Slot 1 — Open Scientific Discovery (DeSci)**: Continuing NEB's scientific lineage (`KEP1` exoplanets, `RET2`
+     retinal scans) at foundation-model scale—e.g., molecular toxicity/activity screening (`MoleculeNet`), protein
+     sequence classification, or formal theorem-proving premise selection (`Lean 4`).
+   - **Future Protocol Extension (Permissionless Task Sponsorship)**: Additional model slots can later be opened to
+     on-chain sponsorship/bounties denominated in NEB, creating native protocol demand for verifiable decentralized
+     fine-tuning without altering the core `NMD3` share verification rules.
+
 ## 2. Datasets (`NMD3`)
 
 A v3 dataset begins with the 4-byte magic `NMD3`, followed by:

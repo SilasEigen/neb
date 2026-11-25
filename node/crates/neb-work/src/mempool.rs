@@ -249,8 +249,11 @@ impl Mempool {
     /// tie-break, taken greedily within `budget` serialised bytes (a
     /// transaction that does not fit is skipped, a smaller one may follow).
     /// Transactions whose inputs left the UTXO set (after a block connects) are
-    /// left out. Maturity and signatures are not rechecked.
+    /// left out, and so are those that spend a coinbase output the next block
+    /// cannot spend yet (after a reorganisation to a shorter chain). Signatures
+    /// are not rechecked.
     pub fn candidates(&self, state: &ChainState, budget: usize) -> Vec<Transaction> {
+        let next_height = state.height() + 1;
         let mut with_fee: Vec<(u128, [u8; 32], &Transaction)> = self
             .txs
             .values()
@@ -258,7 +261,11 @@ impl Mempool {
                 let mut sum_in: u128 = 0;
                 for input in &tx.inputs {
                     let op = OutPoint { txid: input.prev_txid, index: input.prev_index };
-                    sum_in += state.utxo(&op)?.amount as u128;
+                    let utxo = state.utxo(&op)?;
+                    if utxo.coinbase && next_height < utxo.height + COINBASE_MATURITY {
+                        return None;
+                    }
+                    sum_in += utxo.amount as u128;
                 }
                 let sum_out: u128 = tx.outputs.iter().map(|o| o.amount as u128).sum();
                 let fee = sum_in.saturating_sub(sum_out).min(u64::MAX as u128) as u64;

@@ -299,6 +299,33 @@ impl Model {
         }
     }
 
+    /// A model of `arch` with these weights and residuals, in the order of [`Model::weights`] and
+    /// [`Model::residuals`]: a state written to a file is read back with it. Fails on a wrong length or a weight
+    /// outside -8..=7.
+    pub fn from_parts(arch: Arch, weights: &[i8], residuals: &[i32]) -> Result<Model, String> {
+        let n = arch.weights();
+        if weights.len() != n || residuals.len() != n {
+            return Err(format!(
+                "a model has {n} weights and residuals, got {} and {}",
+                weights.len(),
+                residuals.len()
+            ));
+        }
+        match arch.id() {
+            None => Model::from_state(&weights[..N1], &weights[N1..], &residuals[..N1], &residuals[N1..]),
+            Some(id) => {
+                if weights.iter().any(|w| !(WEIGHT_MIN..=WEIGHT_MAX).contains(w)) {
+                    return Err("a weight is outside -8..=7".into());
+                }
+                let mut m = v2::zeroed();
+                m.arch = id as i32;
+                m.w[..n].copy_from_slice(weights);
+                m.r[..n].copy_from_slice(residuals);
+                Ok(Model { inner: Inner::V2(arch, m) })
+            }
+        }
+    }
+
     /// Weights of layer 1 of a v1 model, `NH` rows of `NIN`, row-major; empty for a v2 model.
     pub fn w1(&self) -> &[i8] {
         match &self.inner {
@@ -641,6 +668,29 @@ impl GradSum {
         }
         self.count += 1;
         Ok(ticket)
+    }
+
+    /// Adds the sums of `other`, shares of the same architecture evaluated apart (on another thread). An int32
+    /// sum does not depend on the order of its terms, so the result is the sum of all the shares added one after
+    /// the other. Panics when the two hold more than [`MAX_SHARES`] shares or two architectures.
+    pub fn merge(&mut self, other: &GradSum) {
+        if other.count == 0 {
+            return;
+        }
+        assert!(self.count + other.count <= MAX_SHARES, "a step of more than {MAX_SHARES} shares");
+        match self.arch {
+            None => {
+                self.arch = other.arch;
+                self.gs = other.gs.clone();
+            }
+            Some(a) => {
+                assert_eq!(Some(a), other.arch, "shares of two architectures in one step");
+                for (s, g) in self.gs.iter_mut().zip(&other.gs) {
+                    *s += g;
+                }
+            }
+        }
+        self.count += other.count;
     }
 
     /// [`GradSum::try_add`] for callers that bound the count by construction (a block lists at most 256

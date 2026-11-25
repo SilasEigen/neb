@@ -52,7 +52,12 @@ pub const DATASET_HASH: [u8; 32] = [
 
 /// Public relays that a node dials when it is given no `--connect`, no `--seed` and no `--no-seeds`, as `HOST:PORT`.
 /// Local policy: it is not part of the consensus rules and does not change the genesis id.
-pub const DEFAULT_SEEDS: [&str; 2] = ["seed1.neuralenginebyte.org:3440", "seed2.neuralenginebyte.org:3440"];
+pub const DEFAULT_SEEDS: [&str; 4] = [
+    "seed1.neuralenginebyte.org:3440",
+    "seed2.neuralenginebyte.org:3440",
+    "seed3.neuralenginebyte.org:3440",
+    "seed4.neuralenginebyte.org:3440",
+];
 
 /// Carry-over of the first test network at its last block, height 3001
 /// (`f2d0fe4dd450d5d56fd2a6959daf7c28cf71e6d52c00aa83146eb35c50b30f16`).

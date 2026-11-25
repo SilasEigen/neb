@@ -15,7 +15,7 @@ const T0: u32 = 1_800_000_000;
 
 /// A state on `demo_params` without target comparison: blocks carry arbitrary
 /// nonces.
-fn new_state() -> ChainState {
+pub(super) fn new_state() -> ChainState {
     let params = demo::demo_params(T0, demo::PROJECT_LOCK);
     let mut state = ChainState::from_genesis(params, demo::genesis(T0)).expect("genesis");
     state.verify_pow = false;
@@ -31,7 +31,7 @@ fn new_state_keyed(sk: &SigningKey) -> ChainState {
 }
 
 /// Connects `count` plain blocks, 60 s apart, and returns them.
-fn demo_chain(state: &mut ChainState, count: u32) -> Vec<Block> {
+pub(super) fn demo_chain(state: &mut ChainState, count: u32) -> Vec<Block> {
     let mut added = Vec::new();
     for i in 1..=count {
         let height = state.height() + 1;

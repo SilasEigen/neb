@@ -34,6 +34,8 @@ mod tests;
 #[cfg(test)]
 mod tests_shares;
 #[cfg(test)]
+mod tests_snapshot;
+#[cfg(test)]
 mod tests_upgrade;
 
 pub use block::{Block, ShareRecord};

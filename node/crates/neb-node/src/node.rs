@@ -162,6 +162,7 @@ pub struct Node {
     pub(crate) bans: Arc<BanList>,
     pub(crate) book: Arc<AddrBook>,
     pub(crate) nonce: u64,
+    pub(crate) start: crate::startup::Start,
 }
 
 /// Unix time in seconds. Used for the clock rules of spec/node.md section 6.1
@@ -178,12 +179,11 @@ fn local_nonce() -> u64 {
 }
 
 impl Node {
-    /// Opens the store, writing the genesis block into an empty one, and replays
-    /// the best chain from the genesis block to rebuild the models. Heights and
-    /// cumulative work of all stored blocks are recomputed from the headers
-    /// (nothing derived is read from the store). Fails when the store belongs to
-    /// another genesis, a stored block does not connect, or a stored block has
-    /// no parent in the store (`NodeError::Store`).
+    /// Opens the store, writing the genesis block into an empty one, and builds the state of the best chain: from
+    /// the state file and the blocks after it, or by a replay from the genesis block (`startup.rs`). Heights and
+    /// cumulative work of all stored blocks are recomputed from the headers. Fails when the store belongs to
+    /// another genesis, a stored block does not connect, or a stored block has no parent in the store
+    /// (`NodeError::Store`).
     pub fn open(config: NodeConfig) -> Result<Node, NodeError> {
         let mut store = BlockStore::open(&config.data_dir)?;
         let genesis = config.network.genesis.clone();
@@ -194,11 +194,10 @@ impl Node {
         if chain.first().map(|b| b.id()) != Some(genesis.id()) {
             return Err(NodeError::Store("the store belongs to a different genesis".into()));
         }
-        let mut state = ChainState::from_genesis(config.network.chain.clone(), genesis.clone())
-            .map_err(|e| NodeError::Connect(e.to_string()))?;
-        state.verify_pow = config.verify_pow;
-        for block in &chain[1..] {
-            state.connect_block(block).map_err(|e| NodeError::Connect(e.to_string()))?;
+        let (state, start) =
+            crate::startup::open_state(&config.network.chain, &chain, &config.data_dir, config.verify_pow)?;
+        if start.replayed > 0 {
+            crate::startup::write_state(&config.data_dir, &state.snapshot());
         }
         let missing_parent = || NodeError::Store("a stored block has no parent in the store".into());
         let mut blocks = BTreeMap::new();
@@ -297,6 +296,7 @@ impl Node {
             bans: Arc::new(BanList::default()),
             book,
             nonce: local_nonce(),
+            start,
         })
     }
 
@@ -551,6 +551,7 @@ impl Node {
             drop(inner);
             self.push_job_to_miners();
             self.announce(InvKind::Block, &[id], None);
+            crate::startup::save_state(self, h, false);
             return Ok(BlockOutcome::Connected { height: h });
         }
 
@@ -619,6 +620,7 @@ impl Node {
         drop(inner);
         self.push_job_to_miners();
         self.announce(InvKind::Block, &[tip], None);
+        crate::startup::save_state(self, new_height, true);
         Ok(BlockOutcome::Reorged { height: new_height, disconnected, connected })
     }
 

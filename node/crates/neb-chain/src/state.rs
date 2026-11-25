@@ -177,6 +177,8 @@ impl std::fmt::Display for HeaderError {
 
 impl std::error::Error for HeaderError {}
 
+mod snapshot;
+
 /// What a disconnect needs to undo one connected block. The block itself is
 /// kept in `ChainState::blocks`.
 #[derive(Debug)]
@@ -708,8 +710,9 @@ impl ChainState {
         if self.height() == 0 {
             return Err(ChainError::BadBody("cannot disconnect the genesis"));
         }
+        // A state read from a file keeps the records of its last `MAX_REORG` blocks only.
+        let undo = self.undos.pop().ok_or(ChainError::ReorgTooDeep)?;
         self.blocks.pop().expect("height > 0");
-        let undo = self.undos.pop().expect("an undo per block");
         self.models.pop_back();
         for op in &undo.created {
             if self.utxos.remove(op).is_none() {
@@ -754,9 +757,9 @@ impl ChainState {
             return Err(ChainError::ParentMismatch);
         }
         // Earlier reorganisations to a shorter chain can leave fewer than
-        // the last `MODEL_DEPTH + 1` models; the removed models and the
-        // models of the ancestor are needed below.
-        if self.models.len() < (self.blocks.len()).min(MODEL_DEPTH as usize + 1) {
+        // the last `MODEL_DEPTH + 1` models. Needed below: the models of the
+        // removed blocks, of the ancestor and of its parent.
+        if self.models.len() < self.blocks.len().min((self.height() - ancestor_height) as usize + 2) {
             self.rebuild_models()?;
         }
         let old: Vec<Block> = self.blocks[ancestor_height as usize + 1..].to_vec();

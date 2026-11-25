@@ -169,12 +169,32 @@ pub fn verify_block(
     // parent of `parent`, with its bits, evaluated on M(PP). The gradients are
     // summed in int32, so the order of the list does not matter.
     let target = share_target(parent.bits).map_err(|_| ProofError::Shape("bits of the parent"))?;
-    let mut sum = GradSum::new();
-    for record in &block.shares {
-        let ticket = sum.add(model_pp, ds, &share_key(record, parent.parent, parent.bits));
-        if check && !target.admits(&ticket) {
-            return Err(ProofError::BadShare(*record));
+    // One part of the list per thread: each sums the gradients of its shares and stops at its first share above
+    // the target. The parts are merged in list order, so the result and the share that is reported are those of
+    // one pass over the list.
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(block.shares.len().div_ceil(8));
+    let part = block.shares.len().div_ceil(threads.max(1));
+    let eval = |records: &[ShareRecord]| {
+        let mut sum = GradSum::new();
+        for record in records {
+            let ticket = sum.add(model_pp, ds, &share_key(record, parent.parent, parent.bits));
+            if check && !target.admits(&ticket) {
+                return Err(ProofError::BadShare(*record));
+            }
         }
+        Ok(sum)
+    };
+    let parts: Vec<Result<GradSum, ProofError>> = if threads <= 1 {
+        vec![eval(&block.shares)]
+    } else {
+        std::thread::scope(|scope| {
+            let running: Vec<_> = block.shares.chunks(part).map(|records| scope.spawn(move || eval(records))).collect();
+            running.into_iter().map(|t| t.join().expect("a share thread panicked")).collect()
+        })
+    };
+    let mut sum = GradSum::new();
+    for part in parts {
+        sum.merge(&part?);
     }
     // The step applies to the model of the parent's state, not the grandparent's.
     let mut next = (*models_p[t]).clone();

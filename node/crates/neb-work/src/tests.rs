@@ -161,6 +161,23 @@ fn frames_roundtrip() {
     assert!(parse_frame(&short).is_err());
 }
 
+// A spend of a coinbase output that the next block cannot spend yet is left out of a template: after a
+// reorganisation to a shorter chain the pool still holds it, and a block that lists it would be refused.
+#[test]
+fn a_spend_that_is_no_longer_mature_is_left_out_of_a_template() {
+    let sk = key(9);
+    let mut long = chain_with(&sk);
+    demo_blocks(&mut long, 100);
+    let mut pool = Mempool::with_limit(10_000_000);
+    let genesis_out = OutPoint { txid: demo::genesis_to(T0, lock_of(&sk)).txs[0].txid(), index: 0 };
+    pool.accept(&long, &spend(&long, genesis_out, &sk, 18 * 100_000_000)).expect("mature at block 101");
+    assert_eq!(pool.candidates(&long, 1_000_000).len(), 1);
+    // the same chain two blocks shorter: block 99 cannot spend an output of the genesis block
+    let mut short = chain_with(&sk);
+    demo_blocks(&mut short, 98);
+    assert!(pool.candidates(&short, 1_000_000).is_empty());
+}
+
 // Each admission rule has its own error; the accepted transaction reports its fee.
 #[test]
 fn mempool_accept_and_reject() {

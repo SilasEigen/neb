@@ -247,7 +247,7 @@ pub fn run(args: &[String]) -> i32 {
     configured.max_peers = options.max_peers;
     let live = Live::new();
     let log = Arc::new(Log::new(live.clone(), options.color));
-    log.note("replaying the stored chain: every block and share is checked again, nothing else shows until it is done");
+    log.note("opening the stored chain: the blocks after the saved state are checked again, every block without one");
     let replay = std::time::Instant::now();
     let node = match Node::open(NodeConfig {
         network: configured.clone(),
@@ -268,7 +268,11 @@ pub fn run(args: &[String]) -> i32 {
     }
     let height = node.height();
     let genesis_id = node.chain_id();
-    log.note(&format!("replayed {} blocks in {:.0} s", height, replay.elapsed().as_secs_f32()));
+    let (start, secs) = (node.start(), replay.elapsed().as_secs_f32());
+    match start.loaded {
+        Some(at) => log.note(&format!("state of block {at} read, replayed {} blocks in {secs:.0} s", start.replayed)),
+        None => log.note(&format!("replayed {} blocks in {secs:.0} s", start.replayed)),
+    }
     log.startup(&configured, &hex(&genesis_id), height, &options.datadir, options.work_port);
     match options.miner_lock {
         Some(lock) => log.note(&format!("miner coins go to lock {}", hex(&lock))),
@@ -331,6 +335,7 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
     log.note(&format!("work service {}", work.addr));
+    crate::startup::save_on_stop(&node);
 
     // The handles of the peer, rpc and work listeners stop their threads when
     // dropped, so this thread must keep them alive.

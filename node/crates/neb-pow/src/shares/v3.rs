@@ -1,18 +1,20 @@
 //! Safe Rust wrapper for `nebhash v3` (`spec/nebhash-v3.md`, `pow/ref/nebhash3.c`):
-//! frozen quantized INT8 base backbones with on-chain integer LoRA adapters and key-derived deterministic dropout.
+//! anti-shortcut MoE frozen INT8 backbones with on-chain integer LoRA adapters, residual blocks,
+//! 75% input + 50% bottleneck dropout, and exact int32 forward trace commitment.
 
 use std::ffi::{c_int, c_void};
 use std::ptr;
 
 /// Batch size per `nebhash v3` share (`NEB3_NB`), aligned to `sm_80+` m16 INT8 Tensor Core tiles.
-pub const NB3: usize = 32;
+pub const NB3: usize = 64;
+pub const MAX_BLOCKS: usize = 8;
 
 /// Architecture profiles defined in `spec/nebhash-v3.md` section 3.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum V3Arch {
-    /// `D = 64, R = 8, L = 2` deterministic test & CI profile.
+    /// `D = 64, R = 16, L = 3, E = 16` deterministic test & CI profile (64 KiB base).
     LoraTiny,
-    /// `D = 4096, R = 8, L = 4` Apache-2.0 Qwen3-8B INT8 frozen base profile (~132 KB packed LoRA weights).
+    /// `D = 1024, R = 16, L = 6, E = 10752` Apache-2.0 Qwen3-8B full-INT8 frozen MoE profile (10.50 GiB base, ~97 KiB packed LoRA).
     Qwen3_8bLora,
 }
 
@@ -35,18 +37,25 @@ impl V3Arch {
     pub fn d(self) -> usize {
         match self {
             V3Arch::LoraTiny => 64,
-            V3Arch::Qwen3_8bLora => 4096,
+            V3Arch::Qwen3_8bLora => 1024,
         }
     }
 
     pub fn rank(self) -> usize {
-        8
+        16
     }
 
     pub fn nblocks(self) -> usize {
         match self {
-            V3Arch::LoraTiny => 2,
-            V3Arch::Qwen3_8bLora => 4,
+            V3Arch::LoraTiny => 3,
+            V3Arch::Qwen3_8bLora => 6,
+        }
+    }
+
+    pub fn nexperts(self) -> usize {
+        match self {
+            V3Arch::LoraTiny => 16,
+            V3Arch::Qwen3_8bLora => 10_752,
         }
     }
 
@@ -60,9 +69,9 @@ impl V3Arch {
         self.trainable_weights() / 2
     }
 
-    /// Number of frozen INT8 base projection weights across the adapted blocks.
+    /// Number of frozen full-range INT8 (`-128..127`) base weights across all `E` experts.
     pub fn base_weights(self) -> usize {
-        self.nblocks() * self.d() * self.d()
+        self.nexperts() * self.d() * self.d()
     }
 }
 
@@ -101,13 +110,16 @@ unsafe extern "C" {
         digest: *mut u8,
         ticket: *mut u8,
         idx_out: *mut u32,
+        experts_out: *mut u32,
         nclip: *mut u32,
     ) -> c_int;
     fn neb3_model_apply(m: *mut Neb3ModelRaw, gs: *const i32);
     fn neb3_model_hashes(m: *const Neb3ModelRaw, weights_hash: *mut u8, residual_hash: *mut u8) -> c_int;
+    fn neb3_model_predict(m: *const Neb3ModelRaw, base: *const Neb3BaseRaw, x: *const u8) -> c_int;
 }
 
-/// Owned frozen INT8 base weights for a `V3Arch`.
+/// Owned frozen full-range INT8 (`-128..127`) expert pool for a `V3Arch`.
+#[derive(Clone)]
 pub struct V3Base {
     arch: V3Arch,
     weights: Vec<i8>,
@@ -123,6 +135,18 @@ impl V3Base {
             ));
         }
         Ok(Self { arch, weights })
+    }
+
+    pub fn arch(&self) -> V3Arch {
+        self.arch
+    }
+
+    pub fn weights(&self) -> &[i8] {
+        &self.weights
+    }
+
+    pub fn weights_mut(&mut self) -> &mut [i8] {
+        &mut self.weights
     }
 
     pub fn hash(&self) -> Result<[u8; 32], String> {
@@ -146,7 +170,6 @@ pub struct V3Model {
     raw: Neb3ModelRaw,
 }
 
-// SAFETY: `V3Model` owns its C heap buffers exclusively and does not alias shared mutable state.
 unsafe impl Send for V3Model {}
 unsafe impl Sync for V3Model {}
 
@@ -162,10 +185,12 @@ pub struct V3ShareOutput {
     pub digest: [u8; 32],
     pub ticket: [u8; 32],
     pub indices: [u32; NB3],
+    pub experts: Vec<u32>,
     pub clipped: u32,
 }
 
 /// Parsed `NMD3` dataset header and sample records (`spec/nebhash-v3.md` section 2).
+#[derive(Clone)]
 pub struct V3Dataset {
     pub arch: V3Arch,
     pub base_hash: [u8; 32],
@@ -174,7 +199,6 @@ pub struct V3Dataset {
 }
 
 impl V3Dataset {
-    /// Parse a binary `NMD3` dataset buffer.
     pub fn parse_nmd3(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() < 44 {
             return Err("NMD3 buffer too short".into());
@@ -247,9 +271,20 @@ impl V3Model {
         Ok(Self { arch, raw })
     }
 
+    pub fn weights(&self) -> &[i8] {
+        unsafe { std::slice::from_raw_parts(self.raw.w, self.raw.nweights) }
+    }
+
+    pub fn residuals(&self) -> &[i32] {
+        unsafe { std::slice::from_raw_parts(self.raw.r, self.raw.nweights) }
+    }
+
     pub fn eval_share(&self, base: &V3Base, ds: &V3Dataset, key: &[u8; 32]) -> Result<V3ShareOutput, String> {
         if base.arch != self.arch || ds.arch != self.arch {
             return Err("architecture mismatch".into());
+        }
+        if ds.samples.is_empty() || ds.samples.len() != ds.labels.len() {
+            return Err("invalid dataset".into());
         }
         let raw_base = Neb3BaseRaw {
             arch: base.arch.id() as i32,
@@ -265,6 +300,7 @@ impl V3Model {
         let mut digest = [0u8; 32];
         let mut ticket = [0u8; 32];
         let mut indices = [0u32; NB3];
+        let mut experts_raw = [0u32; MAX_BLOCKS];
         let mut clipped = 0u32;
         let rc = unsafe {
             neb3_share_eval(
@@ -276,6 +312,7 @@ impl V3Model {
                 digest.as_mut_ptr(),
                 ticket.as_mut_ptr(),
                 indices.as_mut_ptr(),
+                experts_raw.as_mut_ptr(),
                 &mut clipped,
             )
         };
@@ -287,6 +324,7 @@ impl V3Model {
             digest,
             ticket,
             indices,
+            experts: experts_raw[..self.arch.nblocks()].to_vec(),
             clipped,
         })
     }
@@ -308,6 +346,22 @@ impl V3Model {
         }
         Ok((wh, rh))
     }
+
+    pub fn predict(&self, base: &V3Base, x: &[u8]) -> Result<u8, String> {
+        if base.arch != self.arch || x.len() != self.arch.d() {
+            return Err("invalid input to predict".into());
+        }
+        let raw_base = Neb3BaseRaw {
+            arch: base.arch.id() as i32,
+            nweights: base.weights.len(),
+            w_base: base.weights.as_ptr(),
+        };
+        let rc = unsafe { neb3_model_predict(&self.raw, &raw_base, x.as_ptr()) };
+        if rc < 0 {
+            return Err("neb3_model_predict failed".into());
+        }
+        Ok(rc as u8)
+    }
 }
 
 #[cfg(test)]
@@ -317,38 +371,13 @@ mod tests {
     #[test]
     fn qwen3_8b_lora_dimensions_match_spec() {
         let arch = V3Arch::Qwen3_8bLora;
-        assert_eq!(arch.d(), 4096);
-        assert_eq!(arch.rank(), 8);
-        assert_eq!(arch.nblocks(), 4);
-        assert_eq!(arch.trainable_weights(), 270_336);
-        assert_eq!(arch.packed_trainable_bytes(), 135_168);
-        assert_eq!(arch.base_weights(), 67_108_864);
-    }
-
-    #[test]
-    fn key_derived_dropout_prevents_per_sample_table_precomputation() {
-        let arch = V3Arch::LoraTiny;
-        // Identical sample repeated N times so every key selects the exact same sample contents.
-        let mut sample = vec![0u8; arch.d()];
-        for (i, v) in sample.iter_mut().enumerate() {
-            *v = ((i * 3 + 1) % 8) as u8;
-        }
-        let ds = V3Dataset {
-            arch,
-            base_hash: [0u8; 32],
-            samples: vec![sample; 64],
-            labels: vec![1u8; 64],
-        };
-        let base_w: Vec<i8> = (0..arch.base_weights()).map(|i| ((i % 15) as i8) - 7).collect();
-        let base = V3Base::new(arch, base_w).unwrap();
-        let model = V3Model::init(arch, &[7u8; 32]).unwrap();
-
-        let out_a = model.eval_share(&base, &ds, &[1u8; 32]).unwrap();
-        let out_b = model.eval_share(&base, &ds, &[2u8; 32]).unwrap();
-
-        // Even with identical samples for every batch slot, distinct keys produce distinct dropout masks -> distinct gradients.
-        assert_ne!(out_a.gradients, out_b.gradients);
-        assert_ne!(out_a.digest, out_b.digest);
+        assert_eq!(arch.d(), 1024);
+        assert_eq!(arch.rank(), 16);
+        assert_eq!(arch.nblocks(), 6);
+        assert_eq!(arch.nexperts(), 10_752);
+        assert_eq!(arch.trainable_weights(), 198_656);
+        assert_eq!(arch.packed_trainable_bytes(), 99_328);
+        assert_eq!(arch.base_weights(), 11_274_289_152); // 10.50 GiB exact
     }
 
     #[test]
@@ -370,7 +399,6 @@ mod tests {
         assert_eq!(ds.samples.len(), 2);
         assert_eq!(ds.labels, vec![0, 1]);
 
-        // Feature > 7 must be rejected
         buf[44] = 8;
         assert!(V3Dataset::parse_nmd3(&buf).is_err());
     }

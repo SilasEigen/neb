@@ -1,166 +1,165 @@
-# nebhash v3: frozen quantized base models with on-chain integer LoRA
+# nebhash v3: anti-shortcut MoE frozen INT8 backbones with on-chain integer LoRA
 
-Status: draft proposal (RFC) for protocol activation via `NMD3` datasets. It defines the attempt, key-derived
-deterministic dropout, LoRA gradient, and model step for frozen INT8 base backbones with compact trainable low-rank
-adapters (`A`, `B`) and a linear head, in the exact integer arithmetic of `spec/shares.md`. Everything that this
-text does not change is as in `spec/shares.md`: the key of an attempt (3.5), the ticket (5.4), the model step rule
-(6), the chain integration (11), and dataset upgrades (11.7).
+Status: draft proposal (RFC) for protocol activation via `NMD3` datasets. It defines the attempt, sequential
+data-dependent expert routing, full-dimension input + bottleneck dropout, forward trace commitment, LoRA gradient,
+and model step in exact integer arithmetic. Everything not redefined here follows `spec/shares.md`.
 
-## 1. Motivation and What Changes
+## 1. Security Model & Why `v3` Changes `v2`
 
-`nebhash v2` (`spec/nebhash-v2.md`) trains small convolutional models (11–13 KB packed weights) over `NB = 16`
-independent samples per attempt. Because samples within a share do not interact and the attempt key only selects
-sample indices, miners can precompute a per-sample gradient table once per model state (`pow/gpu/nebhash2_table_cuda.cu`),
-reducing subsequent nonce attempts to table lookups, integer additions, and BLAKE3 hashing.
+A Proof-of-Useful-Work training algorithm faces four adversarial GPU-kernel shortcuts:
 
-`nebhash v3` introduces two changes while keeping bit-exact integer consensus, compact P2P work frames, and
-millisecond-class single-core CPU verification for winning shares:
+1. **Per-sample gradient table precomputation (`nebhash2_table_cuda.cu`)**: In `v2`, sample gradients do not depend
+   on the nonce `key`, allowing miners to evaluate the dataset once per block and reduce mining to table additions.
+2. **Nibble-packing / lossless VRAM compression**: If frozen base weights are restricted to 4-bit values (`-8..7`),
+   an 8 GB model packs into 4 GB of VRAM and fits onto 6 GB legacy mining cards (e.g., CMP 30HX / GTX 1660S).
+3. **Mega-batch PCIe layer swapping**: If every nonce traverses the exact same static sequence of large weight layers
+   `W_0 -> W_1 -> ...`, a 6 GB card can queue 65,536 nonces and stream one layer at a time over PCIe from host RAM,
+   amortizing PCIe transfer time and bypassing the VRAM floor.
+4. **Lossy / approximate mining**: If `ticket` only commits to heavily quantized/clipped final gradients, a miner can
+   use approximate math (e.g., pruning small channels or skipping weak early-layer gradients) and still produce valid
+   tickets a large fraction of the time while doing less work per attempt.
 
-1. **Key-derived deterministic dropout (anti-table)**: Each share derives a deterministic 1-bit dropout mask from its
-   32-byte `key` for every LoRA bottleneck activation. Different attempts apply different masks to the same sample,
-   making per-sample gradient table precomputation impossible while acting as standard regularization during training.
-2. **Frozen quantized base + on-chain INT8 LoRA**: A large, immutable INT8 base backbone (committed by its BLAKE3
-   digest, never broadcast per block) is paired with compact trainable LoRA adapters (`A`, `B` in `-8..7`) and a
-   trainable classification head. Only the LoRA and head weights (~132 KB packed for the 8B-class mainnet profile)
-   are updated per block, stored in state hashes, and distributed in work frames.
+`nebhash v3` closes all four attack vectors simultaneously while preserving genuine on-chain LoRA training, compact
+~97 KB P2P work frames, bit-exact integer determinism, and millisecond-class single-core CPU verification:
 
-| | `nebhash v2` (`NMD2`) | `nebhash v3` (`NMD3`) |
-|---|---|---|
-| batch size `NB3` | 16 | 32 (aligned to `sm_80+` `m16` INT8 `mma` tiles) |
-| per-sample table precomputation | possible | prevented by key-derived LoRA dropout |
-| base model | none | frozen INT8 base committed by `base_hash` |
-| trainable on-chain weights | 22,280 – 26,000 (11–13 KB) | `LORA_TINY`: 2,176 (~1 KB); `QWEN3_8B_LORA`: 270,336 (~132 KB) |
-| VRAM requirement (mainnet profile) | < 64 MB | > 8.2 GB (excludes 6 GB / 8 GB legacy non-Tensor-Core cards) |
+- **Full-range `int8` (`-128..127`) frozen expert pool (`10.50 GiB` on mainnet)**: Mainnet weights use the full
+  8-bit signed range (`E = 10,752` experts of `1024 x 1024` bytes = `10.50 GiB`), preventing 4-bit nibble packing
+  and exceeding 6 GB / 8 GB VRAM even under entropy coding.
+- **Sequential data-dependent MoE routing + `NB3 = 64` Tensor-Core batching**: All `NB3 = 64` samples in a share run
+  together as a dense `[64, D] x [D, D]` INT8 GEMM (arithmetic intensity ~128 OP/byte, saturating `sm_80+` `mma`
+  Tensor Cores), while the expert index `e_l` for layer `l >= 1` is derived from `BLAKE3(key || l || x_l)`. Because
+  different nonces jump to unpredictable experts across the `10.50 GiB` pool at every layer, mega-batch PCIe swapping
+  is defeated.
+- **75% Input Feature Dropout (`D` bits) + 50% LoRA Bottleneck Dropout (`R = 16` bits)**: Derived from `key` per
+  sample and per layer, creating `2^(NB3 * L * D)` mask entropy and defeating any lookup-table decomposition while
+  acting as standard dropout regularization.
+- **Exact `int32` Forward Trace Commitment (`trace_digest`)**: `ticket = BLAKE3(grad_digest || trace_digest || key)`
+  commits to every unshifted `int32` inner product (`z_base`, `z_a`) and expert index `e_l`. Any single-LSB
+  approximation or skipped computation triggers a 50% bit-flip avalanche in `ticket`.
 
 ## 2. Datasets (`NMD3`)
 
 A v3 dataset begins with the 4-byte magic `NMD3`, followed by:
-- `arch_id` as a little-endian `u32` (`1` for `LORA_TINY`, `2` for `QWEN3_8B_LORA`),
-- `base_hash` as 32 bytes (`BLAKE3("neb-base-weights" || packed_base_weights)` committing to the frozen INT8 base),
-- `N` as a little-endian `u32` (`N >= 1`), the sample count,
-- `N` records of `DIN + 1` bytes: `DIN` quantized input features in `0..7` (representing frozen upstream hidden
-  states / pooled embeddings or synthetic test inputs) and the class label in `0..1`.
+- `arch_id`: little-endian `u32` (`1` for `LORA_TINY`, `2` for `QWEN3_8B_LORA`),
+- `base_hash`: 32 bytes (`BLAKE3("neb-base-weights" || raw_int8_bytes(W_base))`),
+- `N`: little-endian `u32` (`N >= 1`), the sample count,
+- `N` records of `D + 1` bytes: `D` input values in `0..7` and the class label in `0..1`.
 
-An unknown `arch_id`, a feature value above `7`, or a label above `1` makes the dataset invalid.
+An unknown `arch_id`, an input value above `7`, or a label above `1` makes the dataset invalid.
 
 ## 3. Architectures
 
-Each `NMD3` architecture consists of `L` residual LoRA blocks (`l = 0 .. L-1`) operating at hidden width `D` with
-bottleneck rank `R`, followed by one trainable linear output head `H` (`NOUT = 2` classes).
+Each `NMD3` architecture has hidden dimension `D`, LoRA rank `R = 16`, depth `L` adapted blocks, frozen expert pool
+size `E` (each expert `W_base[e]` has shape `[D][D]` with `int8` entries in `-128..127`), batch size `NB3 = 64`, and
+`NOUT = 2` output classes.
 
-For each block `l`:
-- Frozen base matrix `W_base[l]` has shape `[D][D]`, entries in `-8..7` (row-major).
-- Trainable LoRA down-projection `A[l]` has shape `[R][D]`, entries in `-8..7` (row-major).
-- Trainable LoRA up-projection `B[l]` has shape `[D][R]`, entries in `-8..7` (row-major).
-- Output head `H` has shape `[NOUT][D]`, entries in `-8..7` (row-major).
+Trainable weights (entries in `-8..7`, updated on-chain every block) are shared across routed experts at each depth
+`l = 0 .. L-1` (representing domain/task LoRA adapters over the frozen MoE backbone), stored in flat order:
+`A[0] (R x D), B[0] (D x R), ..., A[L-1] (R x D), B[L-1] (D x R), H (NOUT x D)`.
 
-All trainable weights are stored in flat order: for `l = 0 .. L-1`, `A[l]` then `B[l]`, followed by `H`.
-
-### 3.1 `LORA_TINY` (`arch_id = 1`, deterministic test & CI profile)
-
-- `D = 64`, `R = 8`, `L = 2`, `NOUT = 2`
-- Trainable weights: `2 * (8 * 64 + 64 * 8) + 2 * 64 = 2,176` (`1,088` bytes packed)
-- Shifts: `s_a = 4`, `s_lora = 1`, `s_out = 5`, `sb_b = 4`, `sb_in = 5`, `s_head = 5`, `sb_head = 3`, `su_lora = 14`, `su_head = 12`
-
-### 3.2 `QWEN3_8B_LORA` (`arch_id = 2`, mainnet 8B-class Apache-2.0 profile)
-
-Targets the top 4 Transformer projection blocks (`D = 4096`) of an Apache-2.0 quantized **Qwen3-8B** INT8 frozen
-backbone (~8.2 GB VRAM footprint, naturally excluding 6 GB / 8 GB legacy cards without Tensor Cores while saturating
-`sm_80+` `mma.sync.aligned.m16n8k32.s32.s8.s8.s32` tiles):
-
-- `D = 4096`, `R = 8`, `L = 4`, `NOUT = 2`
-- Trainable weights: `4 * (8 * 4096 + 4096 * 8) + 2 * 4096 = 270,336` (`135,168` bytes packed, ~132 KB)
-- Shifts: `s_a = 7`, `s_lora = 1`, `s_out = 8`, `sb_b = 5`, `sb_in = 8`, `s_head = 8`, `sb_head = 3`, `su_lora = 16`, `su_head = 14`
+| Parameter | `LORA_TINY` (`arch_id = 1`, CI & vectors) | `QWEN3_8B_LORA` (`arch_id = 2`, mainnet profile) |
+|---|---|---|
+| `D` / `R` / `L` / `E` | `64` / `16` / `3` / `16` | `1024` / `16` / `6` / `10,752` |
+| `NB3` / `NOUT` | `64` / `2` | `64` / `2` |
+| frozen `int8` base size | `64 KiB` (`65,536` bytes) | **`10.50 GiB`** (`11,274,289,152` bytes, Qwen3-8B slices) |
+| trainable weights (packed) | `6,272` (`3,136` bytes) | `198,656` (**`99,328` bytes**, ~97 KiB) |
+| `s_a` / `s_lora` / `s_out` | `5` / `5` / `9` | `7` / `7` / `11` |
+| `sb_b` / `sb_in` | `4` / `9` | `4` / `11` |
+| `s_head` / `sb_head` | `5` / `2` | `7` / `2` |
+| `su_lora` / `su_head` | `14` / `12` | `16` / `14` |
 
 ## 4. A Share
 
-### 4.1 Sample Indices and Key-Derived Dropout Masks
+### 4.1 Sample Indices and Key-Derived Dropout Stream
 
 Given the 32-byte share `key`:
-1. Draw `NB3 = 32` sample indices from `ChaCha8(key, 4 * NB3)` using the exact reduction `(le32(u_j) * N) >> 32`.
-2. Derive the dropout key:
-   ```
-   drop_key = BLAKE3("neb-lora-drop" || key)
-   ```
-3. Generate `ceil(NB3 * L * R / 8)` bytes from `ChaCha8(drop_key)`. For sample `b` (`0..NB3-1`), block `l` (`0..L-1`),
-   and rank index `r` (`0..R-1`), let bit index `bit = (b * L + l) * R + r`. The dropout mask is:
-   ```
-   mask[b][l][r] = (stream[bit >> 3] >> (bit & 7)) & 1
-   ```
+1. Draw `NB3 = 64` sample indices from `ChaCha8(key, 4 * NB3)` via `(le32(u_j) * N) >> 32`.
+2. Derive `drop_key = BLAKE3("neb-lora-drop" || key)` and generate `ChaCha8(drop_key)`:
+   - First `ceil(NB3 * L * D * 2 / 8)` bytes (`in_stream`) encode 2-bit pairs for input feature dropout: for sample `b`,
+     layer `l`, feature `j`, let `idx2 = (b * L + l) * D + j`, `pair = (in_stream[idx2 >> 2] >> ((idx2 & 3) * 2)) & 3`.
+     `mask_in[b][l][j] = 1` if `pair != 0` else `0` (exact 75% retention).
+   - Next `ceil(NB3 * L * R / 8)` bytes (`u_stream`) encode 1-bit bottleneck dropout: for `bit = (b * L + l) * R + r`,
+     `mask_u[b][l][r] = (u_stream[bit >> 3] >> (bit & 7)) & 1` (exact 50% retention).
 
-### 4.2 Forward Pass
+### 4.2 Forward Pass, Sequential MoE Routing, and Trace Commitment
 
-For each sample `b` in `0 .. NB3-1`, let `x_0` be the `D` input values (in `0..7`). For `l = 0 .. L-1`:
+Initialize 8 trace accumulator lanes `T_lane[0..7] = 0` (`uint32`) and counter `tc = 0`. Helper `trace_mix(val)`:
 ```
-z_base = W_base[l] * x_l                        in int32, length D
-z_a    = A[l] * x_l                             in int32, length R
-y_a    = rshift(z_a, s_a)
-u_clip = clip(y_a, -8, 7)
-u      = u_clip * mask[b][l]                    1-bit key-derived dropout
-z_lora = B[l] * u                               in int32, length D
-y_out  = rshift(z_base + (z_lora << s_lora), s_out)
-x_{l+1} = clip(y_out, -8, 7)
+T_lane[tc mod 8] += uint32(val) ^ (uint32(tc) * 0x9E3779B9u + 0x7F4A7C15u)   (mod 2^32)
+tc += 1
 ```
-Then the output head:
+
+For sample `b = 0 .. NB3-1`, center the raw input `0..7` around zero: `x_0[b][j] = int8(raw_x[b][j]) - 4` (in `-4..3`).
+
+For layer `l = 0 .. L-1`:
+1. **Data-dependent expert selection**:
+   - If `l == 0`: `rh = BLAKE3("neb-moe-route" || key || u8(0))`
+   - If `l > 0`: `rh = BLAKE3("neb-moe-route" || key || u8(l) || bytes(x_l[0..NB3-1][0..D-1]))`
+   - `e_l = (uint64(le32(rh[0..4])) * E) >> 32`
+   - Call `trace_mix(e_l)`.
+2. **Masked forward computation** (for `b = 0 .. NB3-1` in order):
+   - `x_m[b][j] = x_l[b][j] * mask_in[b][l][j]`
+   - For `r = 0 .. R-1`:
+     - `z_a = sum_j A[l][r][j] * x_m[b][j]` (`int32`), call `trace_mix(z_a)`
+     - `y_a[b][l][r] = rshift(z_a, s_a)`
+     - `u[b][l][r] = clip(y_a[b][l][r], -8, 7) * mask_u[b][l][r]`
+   - For `o = 0 .. D-1`:
+     - `z_base = sum_j W_base[e_l][o][j] * x_m[b][j]` (`int32`), call `trace_mix(z_base)`
+     - `z_lora = sum_r B[l][o][r] * u[b][l][r]` (`int32`)
+     - `y_out[b][l][o] = x_l[b][o] + rshift(z_base + z_lora * (1 << s_lora), s_out)` (Transformer residual block)
+     - `x_{l+1}[b][o] = clip(y_out[b][l][o], -8, 7)`
+
+Then the output head for `b = 0 .. NB3-1`:
 ```
-z_h = H * x_L                                   in int32, length NOUT
-y_h = rshift(z_h, s_head)
-a_h = clip(y_h, -8, 7)
+z_h[b][o] = sum_j H[o][j] * x_L[b][j]              call trace_mix(z_h[b][o]) for o = 0 .. NOUT-1
+a_h[b][o] = clip(rshift(z_h[b][o], s_head), -8, 7)
 ```
+`trace_digest` is the 8 little-endian `u32` values `T_lane[0..7]` (32 bytes).
 
 ### 4.3 Backward Pass and Gradients
 
-For each sample `b` with target `T[o] = TPOS (7)` if `o == label` else `TNEG (-8)`:
+For each sample `b = 0 .. NB3-1` with target `T[o] = TPOS (7)` if `o == label` else `TNEG (-8)`:
 ```
-E_h[o] = clip(a_h[o] - T[o], -8, 7)             output head error (unmasked, as in v1/v2)
-G_H   += E_h (x) x_L
+E_h[o] = clip(a_h[b][o] - T[o], -8, 7)
+G_H   += E_h (x) x_L[b]
 e      = clip(rshift(H^T * E_h, sb_head), -8, 7)
 ```
-Then for `l = L-1` down to `0`:
+For `l = L-1` down to `0` (using the routed expert `e_l` and masked input `x_m[b]` from the forward pass):
 ```
-d      = e, except d[i] = 0 where y_out[i] < -8 or y_out[i] > 7
-G_B[l] += d (x) u
-m_u    = B[l]^T * d                             in int32, length R
-e_u    = clip(rshift(m_u, sb_b), -8, 7)
-d_u[r] = e_u[r] * mask[b][l][r], except 0 where y_a[r] < -8 or y_a[r] > 7
-G_A[l] += d_u (x) x_l
+d      = e, except d[o] = 0 where y_out[b][l][o] < -8 or y_out[b][l][o] > 7
+G_B[l] += d (x) u[b][l]
+e_u    = clip(rshift(B[l]^T * d, sb_b), -8, 7)
+d_u[r] = e_u[r] * mask_u[b][l][r], except 0 where y_a[b][l][r] < -8 or y_a[b][l][r] > 7
+G_A[l] += d_u (x) x_m[b]
 if l > 0:
-    m_prev = W_base[l]^T * d + A[l]^T * d_u     in int32, length D
-    e      = clip(rshift(m_prev, sb_in), -8, 7)
+    m_prev[j] = ((W_base[e_l]^T * d)[j] + (A[l]^T * d_u)[j]) * mask_in[b][l][j]
+    e[j]      = clip(d[j] + rshift(m_prev[j], sb_in), -8, 7)
 ```
-After summing over all `NB3 = 32` samples, every entry of every gradient tensor (`G_A[l]`, `G_B[l]`, `G_H`) is
-clipped to `[-CLIP, CLIP]` (`CLIP = 256`).
+Every entry of `G_A[0..L-1]`, `G_B[0..L-1]`, `G_H` is clipped to `[-NEB3_CLIP, NEB3_CLIP]` (`NEB3_CLIP = 1024`, scaled
+4x from `256` for `NB3 = 64`).
 
-### 4.4 Gradient Digest and Ticket
+### 4.4 Digest and Ticket
 
-Over the trainable tensors in flat order `t = 0 .. 2*L` (`A[0], B[0], ..., A[L-1], B[L-1], H`):
+`grad_digest` (32 bytes) is computed over the `2*L + 1` trainable tensors exactly as in `nebhash v2` (`D[f mod 8] += uint32(c) ^ (f + 7919 * (t + 1))`).
+The share `digest` exposed to work frames is `BLAKE3(grad_digest || trace_digest)` (32 bytes), and:
 ```
-lane[f mod 8] += (uint32(G_t[f]) ^ (f + 7919 * (t + 1)))   (mod 2^32)
+ticket = BLAKE3(digest || key)
 ```
-`digest` is the 8 little-endian `u32` lanes (32 bytes), and `ticket = BLAKE3(digest || key)`.
+Thus `ticket` remains a standard 32-byte hash of `(digest || key)` compatible with existing pool/node framing while
+cryptographically binding both the exact clipped gradient and every intermediate forward inner product and MoE route.
 
 ## 5. Model Step and State Hashes
 
-Identical to `spec/shares.md` section 6 and `spec/nebhash-v2.md` section 6:
+As in `spec/shares.md` section 6 using exact 64-bit intermediate sum `v = int64(r[f]) + int64(gs[f])` so no input
+can ever trigger signed 32-bit overflow undefined behavior:
 - `A[l]` and `B[l]` step with `su_lora`; `H` steps with `su_head`.
-- Trainable weights are packed 2 nibbles per byte (low nibble first) in flat trainable order:
-  ```
-  weights_hash  = BLAKE3("neb-model-weights" || pack(W_trainable))
-  residual_hash = BLAKE3("neb-model-residual" || LE32(R_trainable))
-  ```
-- Frozen base weights are initialized (in synthetic tests) or loaded (on mainnet) independently and committed by:
-  ```
-  base_hash = BLAKE3("neb-base-weights" || pack(W_base))
-  ```
+- `weights_hash = BLAKE3("neb-model-weights" || pack4(W_trainable))`
+- `residual_hash = BLAKE3("neb-model-residual" || LE32(R_trainable))`
+- `base_hash = BLAKE3("neb-base-weights" || raw_int8_bytes(W_base))`
 
-## 6. Test Datasets and Vectors
+## 6. Synthetic Test Vectors (`LORA_TINY`)
 
-For `LORA_TINY` (`arch_id = 1`), the deterministic test base weights are drawn from
-`ChaCha8(BLAKE3("neb-syn3-base" || arch_id))` using the same centered binomial mapping `(b&3)+((b>>2)&3)+((b>>4)&3)+((b>>6)&3)-6`
-as model init. The synthetic dataset has `N = 2048` samples:
-`P_c = ChaCha8(BLAKE3("neb-syn3-proto" || arch_id || c)) & 7`,
-`x_i = clip(P_(i mod 2) + (noise_i & 3) - 1, 0, 7)` where `noise_i = ChaCha8(BLAKE3("neb-syn3-sample" || arch_id || le32(i)))`.
-
-Test vectors in `vectors/nebhash3.txt` and `vectors/nebhash3_s1.txt` (`-DNEB3_SU_DROP=6`) verify 6 model steps of
-`(32, 1, 3, 32, 17, 2)` shares with keys `BLAKE3("neb-test-share3" || arch_id || le32(s) || le32(j))`, cross-checked
-bit-for-bit between `pow/ref/nebhash3.c` and `pow/oracle/nebhash3_oracle.py`.
+For offline CI and deterministic vector verification (`arch_id = 1` only; mainnet uses real quantized Qwen3-8B weights
+committed by `base_hash`), `W_base` (`65,536` full-range `int8` bytes) is drawn directly as raw signed bytes from
+`ChaCha8(BLAKE3("neb-syn3-base" || arch_id))`. `vectors/nebhash3.txt` and `vectors/nebhash3_s1.txt` (`-DNEB3_SU_DROP=6`)
+record 6 steps of `(32, 1, 3, 32, 17, 2)` shares verified bit-for-bit by `pow/ref/nebhash3.c` and `pow/oracle/nebhash3_oracle.py`.

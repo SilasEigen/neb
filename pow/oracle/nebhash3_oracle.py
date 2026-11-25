@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Independent pure-Python oracle of spec/nebhash-v3.md: frozen INT8 base + on-chain integer LoRA adapters
-with key-derived deterministic dropout. Shares no code with pow/ref/nebhash3.c and requires no third-party packages.
+"""Independent Python oracle of spec/nebhash-v3.md: anti-shortcut MoE frozen INT8 backbones with on-chain
+integer LoRA adapters, residual blocks, 75% input + 50% bottleneck dropout, and exact int32 trace commitment.
+Shares no code with pow/ref/nebhash3.c.
 
     python3 -B -I pow/oracle/nebhash3_oracle.py --check vectors/nebhash3.txt
     python3 -B -I pow/oracle/nebhash3_oracle.py --check vectors/nebhash3_s1.txt --su-drop 6
@@ -9,7 +10,9 @@ import importlib.util
 import os
 import sys
 
-NB3, CLIP, TPOS, TNEG, NOUT = 32, 256, 7, -8, 2
+import numpy as np
+
+NB3, CLIP, TPOS, TNEG, NOUT = 64, 1024, 7, -8, 2
 N_TEST = 2048
 STEP_SHARES = (32, 1, 3, 32, 17, 2)
 
@@ -20,8 +23,8 @@ _spec.loader.exec_module(_prim)
 chacha8_stream, blake3 = _prim.chacha8_stream, _prim.blake3
 
 ARCHS = {
-    1: dict(d=64, rank=8, nblocks=2, s_a=4, s_lora=1, s_out=5, sb_b=4, sb_in=5, s_head=5, sb_head=3, su_lora=14, su_head=12),
-    2: dict(d=4096, rank=8, nblocks=4, s_a=7, s_lora=1, s_out=8, sb_b=5, sb_in=8, s_head=8, sb_head=3, su_lora=16, su_head=14),
+    1: dict(d=64, rank=16, nblocks=3, nexperts=16, s_a=5, s_lora=5, s_out=9, sb_b=4, sb_in=9, s_head=5, sb_head=2, su_lora=14, su_head=12),
+    2: dict(d=1024, rank=16, nblocks=6, nexperts=10752, s_a=7, s_lora=7, s_out=11, sb_b=4, sb_in=11, s_head=7, sb_head=2, su_lora=16, su_head=14),
 }
 
 
@@ -29,38 +32,19 @@ def le32(v):
     return int(v & 0xFFFFFFFF).to_bytes(4, "little")
 
 
-def clip(v, lo, hi):
-    return lo if v < lo else (hi if v > hi else v)
-
-
 def rshift(x, n):
     return x if n == 0 else (x + (1 << (n - 1))) >> n
 
 
-def _binom(raw):
-    return [(b & 3) + ((b >> 2) & 3) + ((b >> 4) & 3) + ((b >> 6) & 3) - 6 for b in raw]
-
-
 def init_base(arch):
     cfg = ARCHS[arch]
-    d, L = cfg["d"], cfg["nblocks"]
-    raw = chacha8_stream(blake3(b"neb-syn3-base" + bytes([arch])), L * d * d)
-    w = _binom(raw)
-    out = []
-    at = 0
-    for _ in range(L):
-        mat = []
-        for _o in range(d):
-            mat.append(w[at:at + d])
-            at += d
-        out.append(mat)
-    return out
+    d, E = cfg["d"], cfg["nexperts"]
+    raw = chacha8_stream(blake3(b"neb-syn3-base" + bytes([arch])), E * d * d)
+    return np.frombuffer(raw, dtype=np.int8).astype(np.int64).reshape(E, d, d).copy()
 
 
 def base_hash(w_base):
-    flat = [v & 15 for mat in w_base for row in mat for v in row]
-    packed = bytes(flat[i] | (flat[i + 1] << 4) for i in range(0, len(flat), 2))
-    return blake3(b"neb-base-weights" + packed)
+    return blake3(b"neb-base-weights" + w_base.astype(np.int8).tobytes())
 
 
 def init_state(arch, seed):
@@ -72,18 +56,14 @@ def init_state(arch, seed):
         shapes.append((d, r))
     shapes.append((NOUT, d))
     total = sum(a * b for a, b in shapes)
-    w = _binom(chacha8_stream(blake3(b"neb-model-init" + seed), total))
-    ws, rs, at = [], [], 0
-    for rows, cols in shapes:
-        mat = []
-        rmat = []
-        for _i in range(rows):
-            mat.append(w[at:at + cols])
-            rmat.append([0] * cols)
-            at += cols
-        ws.append(mat)
-        rs.append(rmat)
-    return ws, rs
+    raw = np.frombuffer(chacha8_stream(blake3(b"neb-model-init" + seed), total), dtype=np.uint8).astype(np.int64)
+    w = (raw & 3) + ((raw >> 2) & 3) + ((raw >> 4) & 3) + ((raw >> 6) & 3) - 6
+    ws, at = [], 0
+    for sh in shapes:
+        nw = sh[0] * sh[1]
+        ws.append(w[at:at + nw].reshape(sh).copy())
+        at += nw
+    return ws, [np.zeros(sh, dtype=np.int64) for sh in shapes]
 
 
 def share_indices(key, n):
@@ -91,138 +71,144 @@ def share_indices(key, n):
     return [(int.from_bytes(u[4 * j:4 * j + 4], "little") * n) >> 32 for j in range(NB3)]
 
 
-def dropout_masks(key, L, R):
+def dropout_masks(key, L, D, R):
     drop_key = blake3(b"neb-lora-drop" + key)
-    nbytes = (NB3 * L * R + 7) // 8
-    raw = chacha8_stream(drop_key, nbytes)
-    masks = []
-    for b in range(NB3):
-        bm = []
-        for l in range(L):
-            lm = []
-            for r in range(R):
-                bit = (b * L + l) * R + r
-                lm.append((raw[bit >> 3] >> (bit & 7)) & 1)
-            bm.append(lm)
-        masks.append(bm)
-    return masks
+    in_bytes = (NB3 * L * D * 2 + 7) // 8
+    u_bytes = (NB3 * L * R + 7) // 8
+    raw = chacha8_stream(drop_key, in_bytes + u_bytes)
+    in_arr = np.frombuffer(raw[:in_bytes], dtype=np.uint8)
+    # Extract 2-bit pairs in little-endian order
+    p0 = (in_arr >> 0) & 3
+    p1 = (in_arr >> 2) & 3
+    p2 = (in_arr >> 4) & 3
+    p3 = (in_arr >> 6) & 3
+    pairs = np.stack([p0, p1, p2, p3], axis=-1).ravel()[:NB3 * L * D]
+    mask_in = (pairs != 0).astype(np.int64).reshape(NB3, L, D)
+
+    u_arr = np.frombuffer(raw[in_bytes:], dtype=np.uint8)
+    mask_u = np.unpackbits(u_arr, bitorder="little")[:NB3 * L * R].astype(np.int64).reshape(NB3, L, R)
+    return mask_in, mask_u
 
 
-def matvec(mat, vec):
-    return [sum(a * b for a, b in zip(row, vec)) for row in mat]
+class TraceAcc:
+    def __init__(self):
+        self.lanes = [0] * 8
+        self.tc = 0
+
+    def mix_scalar(self, val):
+        c = self.tc
+        mix = ((int(val) & 0xFFFFFFFF) ^ ((c * 0x9E3779B9 + 0x7F4A7C15) & 0xFFFFFFFF)) & 0xFFFFFFFF
+        self.lanes[c & 7] = (self.lanes[c & 7] + mix) & 0xFFFFFFFF
+        self.tc = c + 1
+
+    def digest(self):
+        return b"".join(le32(x) for x in self.lanes)
 
 
-def matvec_t(mat, vec):
-    cols = len(mat[0])
-    out = [0] * cols
-    for row, dv in zip(mat, vec):
-        if dv == 0:
-            continue
-        for j, w in enumerate(row):
-            out[j] += dv * w
-    return out
-
-
-def share_gradient(arch, ws, w_base, xs_in, labels, key):
+def evaluate_share(arch, ws, w_base, x_raw, labels, key):
     cfg = ARCHS[arch]
-    d, r, L = cfg["d"], cfg["rank"], cfg["nblocks"]
-    masks = dropout_masks(key, L, r)
-    grads = [[[0] * len(mat[0]) for _ in range(len(mat))] for mat in ws]
+    d, r, L, E = cfg["d"], cfg["rank"], cfg["nblocks"], cfg["nexperts"]
+    mask_in, mask_u = dropout_masks(key, L, d, r)
+    tr = TraceAcc()
+
+    x0 = x_raw.astype(np.int64) - 4
+    xs = [x0]
+    xms, y_as, us, y_outs, experts = [], [], [], [], []
+
+    for l in range(L):
+        xl = xs[-1]
+        if l == 0:
+            rh = blake3(b"neb-moe-route" + key + bytes([0]))
+        else:
+            rh = blake3(b"neb-moe-route" + key + bytes([l]) + xl.astype(np.int8).tobytes())
+        e_l = (int.from_bytes(rh[:4], "little") * E) >> 32
+        experts.append(e_l)
+        tr.mix_scalar(e_l)
+
+        Wb = w_base[e_l]
+        Al, Bl = ws[2 * l], ws[2 * l + 1]
+        xm = xl * mask_in[:, l, :]
+        za_mat = xm @ Al.T
+        zb_mat = xm @ Wb.T
+        ya_mat = rshift(za_mat, cfg["s_a"])
+        u_mat = np.clip(ya_mat, -8, 7) * mask_u[:, l, :]
+        zl_mat = u_mat @ Bl.T
+        yo_mat = xl + rshift(zb_mat + zl_mat * (1 << cfg["s_lora"]), cfg["s_out"])
+        xnext = np.clip(yo_mat, -8, 7)
+
+        for b in range(NB3):
+            for ri in range(r):
+                tr.mix_scalar(za_mat[b, ri])
+            for o in range(d):
+                tr.mix_scalar(zb_mat[b, o])
+
+        xs.append(xnext)
+        xms.append(xm)
+        y_as.append(ya_mat)
+        us.append(u_mat)
+        y_outs.append(yo_mat)
 
     H = ws[2 * L]
-    G_H = grads[2 * L]
-
+    xL = xs[L]
+    zh_mat = xL @ H.T
     for b in range(NB3):
-        xs = [list(xs_in[b])]
-        y_as, us, y_outs = [], [], []
-        for l in range(L):
-            Al, Bl = ws[2 * l], ws[2 * l + 1]
-            xl = xs[-1]
-            ya = [rshift(z, cfg["s_a"]) for z in matvec(Al, xl)]
-            u = [clip(v, -8, 7) * m for v, m in zip(ya, masks[b][l])]
-            zb = matvec(w_base[l], xl)
-            zl = matvec(Bl, u)
-            yo = [rshift(zb_i + (zl_i << cfg["s_lora"]), cfg["s_out"]) for zb_i, zl_i in zip(zb, zl)]
-            xs.append([clip(v, -8, 7) for v in yo])
-            y_as.append(ya)
-            us.append(u)
-            y_outs.append(yo)
-
-        xL = xs[L]
-        ah = [clip(rshift(z, cfg["s_head"]), -8, 7) for z in matvec(H, xL)]
-        eh = [clip(ah[o] - (TPOS if o == labels[b] else TNEG), -8, 7) for o in range(NOUT)]
         for o in range(NOUT):
-            eo = eh[o]
-            if eo != 0:
-                row = G_H[o]
-                for j in range(d):
-                    row[j] += eo * xL[j]
-        e = [clip(rshift(v, cfg["sb_head"]), -8, 7) for v in matvec_t(H, eh)]
+            tr.mix_scalar(zh_mat[b, o])
 
-        for l in range(L - 1, -1, -1):
-            Al, Bl = ws[2 * l], ws[2 * l + 1]
-            G_Al, G_Bl = grads[2 * l], grads[2 * l + 1]
-            xl = xs[l]
-            dv = [0 if (yo < -8 or yo > 7) else ev for yo, ev in zip(y_outs[l], e)]
-            for o in range(d):
-                dvo = dv[o]
-                if dvo != 0:
-                    row = G_Bl[o]
-                    ul = us[l]
-                    for ri in range(r):
-                        row[ri] += dvo * ul[ri]
-            eu = [clip(rshift(v, cfg["sb_b"]), -8, 7) for v in matvec_t(Bl, dv)]
-            du = [0 if (ya < -8 or ya > 7) else (eui * m) for ya, eui, m in zip(y_as[l], eu, masks[b][l])]
-            for ri in range(r):
-                dur = du[ri]
-                if dur != 0:
-                    row = G_Al[ri]
-                    for j in range(d):
-                        row[j] += dur * xl[j]
-            if l > 0:
-                mb = matvec_t(w_base[l], dv)
-                ma = matvec_t(Al, du)
-                e = [clip(rshift(a + c, cfg["sb_in"]), -8, 7) for a, c in zip(mb, ma)]
-    return grads
+    ah = np.clip(rshift(zh_mat, cfg["s_head"]), -8, 7)
+    t = np.full((NB3, NOUT), TNEG, dtype=np.int64)
+    t[np.arange(NB3), labels] = TPOS
+    eh = np.clip(ah - t, -8, 7)
 
+    grads = [None] * (2 * L + 1)
+    grads[2 * L] = eh.T @ xL
+    e = np.clip(rshift(eh @ H, cfg["sb_head"]), -8, 7)
 
-def digest_of(grads):
-    lanes = [0] * 8
-    for ti, g in enumerate(grads):
-        f = 0
-        bias = 7919 * (ti + 1)
-        for row in g:
-            for v in row:
-                lanes[f & 7] = (lanes[f & 7] + ((v & 0xFFFFFFFF) ^ ((f + bias) & 0xFFFFFFFF))) & 0xFFFFFFFF
-                f += 1
-    return b"".join(le32(x) for x in lanes)
+    for l in range(L - 1, -1, -1):
+        Wb = w_base[experts[l]]
+        Al, Bl = ws[2 * l], ws[2 * l + 1]
+        xm = xms[l]
+        dv = e * ((y_outs[l] >= -8) & (y_outs[l] <= 7))
+        grads[2 * l + 1] = dv.T @ us[l]
+        eu = np.clip(rshift(dv @ Bl, cfg["sb_b"]), -8, 7)
+        du = eu * mask_u[:, l, :] * ((y_as[l] >= -8) & (y_as[l] <= 7))
+        grads[2 * l] = du.T @ xm
+        if l > 0:
+            m_prev = (dv @ Wb + du @ Al) * mask_in[:, l, :]
+            e = np.clip(dv + rshift(m_prev, cfg["sb_in"]), -8, 7)
+
+    clipped_grads = [np.clip(g, -CLIP, CLIP) for g in grads]
+    g_lanes = [0] * 8
+    for ti, g in enumerate(clipped_grads):
+        c = (g.ravel() & 0xFFFFFFFF).astype(np.uint64)
+        f = np.arange(c.size, dtype=np.uint64)
+        v = c ^ (f + np.uint64(7919 * (ti + 1)))
+        for k in range(8):
+            g_lanes[k] = (g_lanes[k] + int(v[k::8].sum())) & 0xFFFFFFFF
+    grad_digest = b"".join(le32(x) for x in g_lanes)
+    digest = blake3(grad_digest + tr.digest())
+    ticket = blake3(digest + key)
+    return clipped_grads, digest, ticket, experts
 
 
 class TestDataset:
     def __init__(self, arch):
         self.arch, self.d, self.n = arch, ARCHS[arch]["d"], N_TEST
         self.proto = [
-            [b & 7 for b in chacha8_stream(blake3(b"neb-syn3-proto" + bytes([arch, c])), self.d)]
+            np.frombuffer(chacha8_stream(blake3(b"neb-syn3-proto" + bytes([arch, c])), self.d), dtype=np.uint8).astype(np.int64) & 7
             for c in range(2)
         ]
 
     def get(self, i):
-        noise = chacha8_stream(blake3(b"neb-syn3-sample" + bytes([self.arch]) + le32(i)), self.d)
-        p = self.proto[i & 1]
-        return [clip(p[j] + (noise[j] & 3) - 1, 0, 7) for j in range(self.d)], (i & 1)
+        noise = np.frombuffer(chacha8_stream(blake3(b"neb-syn3-sample" + bytes([self.arch]) + le32(i)), self.d), dtype=np.uint8).astype(np.int64)
+        return np.clip(self.proto[i % 2] + (noise & 3) - 1, 0, 7), i % 2
 
 
 def share(arch, ws, w_base, ds, key):
     idx = share_indices(key, ds.n)
-    xs, labels = [], []
-    for i in idx:
-        x, y = ds.get(i)
-        xs.append(x)
-        labels.append(y)
-    raw_g = share_gradient(arch, ws, w_base, xs, labels, key)
-    grads = [[[clip(v, -CLIP, CLIP) for v in row] for row in mat] for mat in raw_g]
-    d = digest_of(grads)
-    return grads, d, blake3(d + key), idx
+    xs, labels = zip(*(ds.get(i) for i in idx))
+    grads, digest, ticket, experts = evaluate_share(arch, ws, w_base, np.stack(xs), np.array(labels), key)
+    return grads, digest, ticket, idx, experts
 
 
 def apply(arch, ws, rs, sums, su_drop=0):
@@ -230,23 +216,18 @@ def apply(arch, ws, rs, sums, su_drop=0):
     L = cfg["nblocks"]
     for i in range(len(ws)):
         su = (cfg["su_lora"] if i < 2 * L else cfg["su_head"]) - su_drop
-        unit = 1 << su
-        for r_i in range(len(ws[i])):
-            wrow, rrow, srow = ws[i][r_i], rs[i][r_i], sums[i][r_i]
-            for c_i in range(len(wrow)):
-                v = rrow[c_i] + srow[c_i]
-                q = (v >> su) if v >= 0 else -((-v) >> su)
-                dlt = clip(q, -1, 1)
-                v -= dlt * unit
-                rrow[c_i] = clip(v, -unit, unit)
-                wrow[c_i] = clip(wrow[c_i] - dlt, -8, 7)
+        v = rs[i] + sums[i]
+        q = np.sign(v) * (np.abs(v) >> su)
+        dlt = np.clip(q, -1, 1)
+        rs[i] = np.clip(v - dlt * (1 << su), -(1 << su), 1 << su)
+        ws[i] = np.clip(ws[i] - dlt, -8, 7)
 
 
 def hashes(ws, rs):
-    wflat = [v & 15 for mat in ws for row in mat for v in row]
-    packed = bytes(wflat[i] | (wflat[i + 1] << 4) for i in range(0, len(wflat), 2))
-    rbytes = b"".join(le32(v) for mat in rs for row in mat for v in row)
-    return blake3(b"neb-model-weights" + packed), blake3(b"neb-model-residual" + rbytes)
+    w = np.concatenate([x.ravel() for x in ws]) & 15
+    packed = (w[0::2] | (w[1::2] << 4)).astype(np.uint8).tobytes()
+    r = np.concatenate([x.ravel() for x in rs]).astype(np.int64) & 0xFFFFFFFF
+    return blake3(b"neb-model-weights" + packed), blake3(b"neb-model-residual" + r.astype("<u4").tobytes())
 
 
 def share_key(arch, s, j):
@@ -263,16 +244,14 @@ def run_vectors(su_drop=0):
     lines.append(f"arch {arch} base {base_hash(w_base).hex()}")
     lines.append(f"arch {arch} init {wh.hex()} {rh.hex()}")
     for s, nsh in enumerate(STEP_SHARES):
-        sums = [[[0] * len(row) for row in mat] for mat in ws]
+        sums = [np.zeros_like(x) for x in ws]
         for j in range(nsh):
             k = share_key(arch, s, j)
-            g, d, t, idx = share(arch, ws, w_base, ds, k)
+            g, d, t, idx, experts = share(arch, ws, w_base, ds, k)
             for i in range(len(sums)):
-                for r_i in range(len(sums[i])):
-                    for c_i in range(len(sums[i][r_i])):
-                        sums[i][r_i][c_i] += g[i][r_i][c_i]
+                sums[i] += g[i]
             if j == 0 or j == nsh - 1:
-                lines.append(f"arch {arch} step {s} share {j} {d.hex()} {t.hex()} {idx[0]} {idx[-1]}")
+                lines.append(f"arch {arch} step {s} share {j} {d.hex()} {t.hex()} {idx[0]} {idx[-1]} {experts[0]} {experts[-1]}")
         apply(arch, ws, rs, sums, su_drop=su_drop)
         wh, rh = hashes(ws, rs)
         lines.append(f"arch {arch} step {s} state {wh.hex()} {rh.hex()}")

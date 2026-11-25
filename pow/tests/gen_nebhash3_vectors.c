@@ -1,5 +1,5 @@
 /* Deterministic vector generator for spec/nebhash-v3.md (LORA_TINY, arch 1).
- * Prints base hash, init state hashes, 6 steps of (32, 1, 3, 32, 17, 2) shares and state hashes. */
+ * Prints full-int8 base hash, init state hashes, 6 steps of (32, 1, 3, 32, 17, 2) shares and state hashes. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -72,15 +72,9 @@ static int8_t *make_syn3_base(int arch, size_t nweights) {
   memcpy(in, "neb-syn3-base", 13);
   in[13] = (uint8_t)arch;
   blake3_hash(in, sizeof in, key);
-  uint8_t *raw = (uint8_t *)malloc(nweights);
   int8_t *w = (int8_t *)malloc(nweights);
-  if (!raw || !w) { free(raw); free(w); return NULL; }
-  chacha8_stream(key, raw, nweights);
-  for (size_t k = 0; k < nweights; k++) {
-    const int b = raw[k];
-    w[k] = (int8_t)((b & 3) + ((b >> 2) & 3) + ((b >> 4) & 3) + ((b >> 6) & 3) - 6);
-  }
-  free(raw);
+  if (!w) return NULL;
+  chacha8_stream(key, (uint8_t *)w, nweights);
   return w;
 }
 
@@ -128,16 +122,16 @@ int main(void) {
     const int nsh = STEP_SHARES[s];
     for (int j = 0; j < nsh; j++) {
       uint8_t key[32], digest[32], ticket[32];
-      uint32_t idx[NEB3_NB];
+      uint32_t idx[NEB3_NB], experts[NEB3_MAX_BLOCKS];
       test_share_key(arch, (uint32_t)s, (uint32_t)j, key);
-      if (neb3_share_eval(&m, &base, &ds, key, g, digest, ticket, idx, NULL) != 0) return 1;
+      if (neb3_share_eval(&m, &base, &ds, key, g, digest, ticket, idx, experts, NULL) != 0) return 1;
       for (size_t f = 0; f < A->nweights; f++) sums[f] += g[f];
       if (j == 0 || j == nsh - 1) {
         printf("arch %d step %d share %d ", arch, s, j);
         print_hex(digest, 32);
         printf(" ");
         print_hex(ticket, 32);
-        printf(" %u %u\n", idx[0], idx[NEB3_NB - 1]);
+        printf(" %u %u %u %u\n", idx[0], idx[NEB3_NB - 1], experts[0], experts[A->nblocks - 1]);
       }
     }
     neb3_model_apply(&m, sums);

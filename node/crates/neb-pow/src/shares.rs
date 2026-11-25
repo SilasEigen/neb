@@ -15,6 +15,8 @@
 use std::ffi::{c_int, c_void};
 use std::sync::Arc;
 
+pub mod v3;
+
 fn hex_bytes<const K: usize>(s: &str) -> Result<[u8; K], String> {
     let b = s.as_bytes();
     if b.len() != 2 * K {

@@ -23,11 +23,21 @@ gcc -O2 -Wall -Wextra -Werror -DNEB2_SU_DROP=6 -Ipow/ref -Ipow/tests $SRC2 -o "$
 cmp "$BUILD/nebhash2.regen.txt" vectors/nebhash2.txt
 cmp "$BUILD/nebhash2_s1.regen.txt" vectors/nebhash2_s1.txt
 echo "PASS C reference reproduces vectors/nebhash2.txt and vectors/nebhash2_s1.txt"
+SRC3="pow/tests/gen_nebhash3_vectors.c pow/ref/nebhash3.c pow/ref/chacha8.c pow/ref/blake3_min.c"
+gcc -O2 -Wall -Wextra -Werror -Ipow/ref $SRC3 -o "$BUILD/gen_nebhash3_vectors"
+gcc -O2 -Wall -Wextra -Werror -DNEB3_SU_DROP=6 -Ipow/ref $SRC3 -o "$BUILD/gen_nebhash3_vectors_s1"
+"$BUILD/gen_nebhash3_vectors" > "$BUILD/nebhash3.regen.txt"
+"$BUILD/gen_nebhash3_vectors_s1" > "$BUILD/nebhash3_s1.regen.txt"
+cmp "$BUILD/nebhash3.regen.txt" vectors/nebhash3.txt
+cmp "$BUILD/nebhash3_s1.regen.txt" vectors/nebhash3_s1.txt
+echo "PASS C reference reproduces vectors/nebhash3.txt and vectors/nebhash3_s1.txt"
 if [ "${SKIP_ORACLE:-0}" != "1" ]; then
   python3 -B -I pow/oracle/shares_oracle.py --selftest | tail -1
   python3 -B -I pow/oracle/shares_oracle.py --check vectors/shares.txt
   python3 -B -I pow/oracle/shares_oracle.py --check vectors/shares_s1.txt --su1 9 --su2 6
   python3 -B -I pow/oracle/nebhash2_oracle.py --check vectors/nebhash2.txt
   python3 -B -I pow/oracle/nebhash2_oracle.py --check vectors/nebhash2_s1.txt --su-drop 6
+  python3 -B -I pow/oracle/nebhash3_oracle.py --check vectors/nebhash3.txt
+  python3 -B -I pow/oracle/nebhash3_oracle.py --check vectors/nebhash3_s1.txt --su-drop 6
 fi
 echo "SHARE VECTORS PASSED"

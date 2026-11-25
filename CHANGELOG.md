@@ -6,6 +6,23 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-11-25
+
+Same protocol, network, genesis and dataset file as 1.0.7, and the nodes and miners of 1.0.2 to 1.0.8 work together.
+Node and pool operators should upgrade.
+
+- Node: a start no longer replays the whole chain. The node writes its state to `state.dat` in the data directory
+  every 10 blocks and after a reorganisation, and at the next start reads it and replays the blocks stored after
+  it. Without the file, with a damaged one, or with one of another tip, it replays the whole chain as before. On
+  Linux and macOS a stop by SIGTERM or SIGINT writes the file first, so the next start replays no block. The
+  first start after the upgrade replays the chain once and writes the file.
+- Node: the shares of a block are checked on several threads, so a replay of the whole chain is shorter.
+- Node: a reorganisation rebuilds the models from the genesis block only when it lacks the levels it needs. One
+  that followed a reorganisation to a shorter chain always did.
+- Work service: a job leaves out a transaction that spends a coinbase output the next block cannot spend yet, as
+  can remain in the pool after a reorganisation to a shorter chain.
+- Node: `seed3.neuralenginebyte.org` and `seed4.neuralenginebyte.org` join the default relays of the main network.
+
 ## [1.0.7] - 2026-11-24
 
 Same protocol, network, genesis and dataset file as 1.0.6, and the nodes and miners of 1.0.2 to 1.0.7 work together.

@@ -7,7 +7,7 @@ This guide gives the parameters of the NEB main network and what differs from th
 | Item | Value |
 |---|---|
 | network name | mainnet |
-| software version | 1.0.7 |
+| software version | 1.0.8 |
 | protocol version | 3 |
 | address prefix | `neb` (bech32m, 32-byte lock data) |
 | peer-to-peer port | 3440 |
@@ -31,7 +31,7 @@ This guide gives the parameters of the NEB main network and what differs from th
 | genesis id | `da2f5af7bb4c5e2bcc8d558b2f4f01d4c88557a943e6cff9cd035638fe9439ae` |
 | network magic | `ad33cae5` |
 | genesis coinbase | 217 outputs: the reward, the project share and 215 locks of the carry-over, 30,211.89999952 coins |
-| default relays | `seed1.neuralenginebyte.org:3440`, `seed2.neuralenginebyte.org:3440` |
+| default relays | `seed1.neuralenginebyte.org:3440` to `seed4.neuralenginebyte.org:3440` |
 
 The ports are those of the test network. A machine that runs a node of each network gives one of them other ports (`--port`, `--work-port`, `--rpc-port`).
 

@@ -6,8 +6,10 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
-Same protocol, network, genesis and dataset file as 1.0.8. No consensus rule changes: what follows is relay and
-JSON-RPC policy.
+## [1.0.9] - 2026-11-25
+
+Same protocol, network, genesis and dataset file as 1.0.8, and the nodes and miners of 1.0.2 to 1.0.9 work together.
+No consensus rule changes: what follows is relay and JSON-RPC policy. Node and pool operators should upgrade.
 
 - Node: one thread writes the state file from one buffer that it keeps, where each write started a thread and
   took a buffer of its own.

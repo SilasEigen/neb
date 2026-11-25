@@ -507,10 +507,6 @@ impl Node {
         thread::spawn(move || serve_peer(node, stream, false, probe, addr));
         Ok(())
     }
-
-    pub fn mempool_tx(&self, id: &[u8; 32]) -> Option<Transaction> {
-        self.inner.lock().expect("node lock").mempool.tx(id).cloned()
-    }
 }
 
 /// Sends `getblocks` with the locator of the best chain.
@@ -736,7 +732,7 @@ fn serve_peer(node: Node, mut stream: TcpStream, inbound: bool, probe: bool, pee
             }
             CMD_TX => {
                 let Ok(tx) = Transaction::decode(&message.payload) else { break };
-                let _ = node.submit_tx(tx);
+                let _ = node.accept_tx(tx);
             }
             CMD_SHARES => {
                 let Ok((parent, records)) = parse_shares(&message.payload) else { break };

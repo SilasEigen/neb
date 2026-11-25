@@ -7,7 +7,7 @@
 //! Local storage only: no rule depends on these bytes. A reader that finds anything unexpected returns an error, and
 //! the caller replays the chain from the genesis block instead, which gives the same state.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use neb_codec::Reader;
@@ -80,6 +80,13 @@ impl ChainState {
     /// The state as bytes; see the module. The models shared by several levels are written once.
     pub fn snapshot(&self) -> Vec<u8> {
         let mut out = Vec::new();
+        self.snapshot_into(&mut out);
+        out
+    }
+
+    /// As `snapshot`, in place of what `out` holds: a caller that writes the state again and again keeps one buffer.
+    pub fn snapshot_into(&self, out: &mut Vec<u8>) {
+        out.clear();
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&self.chain_id);
         out.extend_from_slice(&self.height().to_le_bytes());
@@ -89,20 +96,20 @@ impl ChainState {
         }
         out.extend_from_slice(&(self.utxos.len() as u32).to_le_bytes());
         for (op, u) in &self.utxos {
-            put_outpoint(&mut out, op);
-            put_utxo(&mut out, u);
+            put_outpoint(out, op);
+            put_utxo(out, u);
         }
         let kept = self.undos.len().min(MAX_REORG as usize);
         out.extend_from_slice(&(kept as u32).to_le_bytes());
         for undo in &self.undos[self.undos.len() - kept..] {
             out.extend_from_slice(&(undo.spent.len() as u32).to_le_bytes());
             for (op, u) in &undo.spent {
-                put_outpoint(&mut out, op);
-                put_utxo(&mut out, u);
+                put_outpoint(out, op);
+                put_utxo(out, u);
             }
             out.extend_from_slice(&(undo.created.len() as u32).to_le_bytes());
             for op in &undo.created {
-                put_outpoint(&mut out, op);
+                put_outpoint(out, op);
             }
             out.extend_from_slice(&undo.coinbase_out.to_le_bytes());
             out.extend_from_slice(&undo.fees.to_le_bytes());
@@ -135,9 +142,8 @@ impl ChainState {
         for position in levels.iter().flatten() {
             out.extend_from_slice(&position.to_le_bytes());
         }
-        let hash = blake3::hash(&out);
+        let hash = blake3::hash(out);
         out.extend_from_slice(hash.as_bytes());
-        out
     }
 
     /// The height of the tip that `bytes` name, when they start as a state does. Nothing else is checked.
@@ -169,7 +175,7 @@ impl ChainState {
             return Err("the state belongs to another tip".into());
         }
         let (unspent_total, coinbase_total, fees_total) = (u128_of(&mut r)?, u128_of(&mut r)?, u128_of(&mut r)?);
-        let mut utxos = BTreeMap::new();
+        let mut utxos = super::coins::Coins::default();
         let mut sum: u128 = 0;
         for _ in 0..count(&mut r, 36 + 46)? {
             let (op, u) = (outpoint(&mut r)?, utxo(&mut r)?);

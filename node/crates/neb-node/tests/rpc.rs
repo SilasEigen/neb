@@ -161,6 +161,16 @@ fn getutxos_lists_the_outputs_of_a_lock() {
     // the node stops reading at the limit it is given
     assert_eq!(node.utxos_of(&demo::MINER_LOCK, None, 2).len(), 2);
     assert_eq!(node.utxos_of(&demo::MINER_LOCK, None, 20_000).len(), 3);
+    // a lock type and a minimum amount narrow the pages; null stands for no page start
+    let lock = Value::String(hex(&demo::MINER_LOCK));
+    let filtered = |lock_type: Value, min: i64| {
+        let params = vec![lock.clone(), Value::Number(10), Value::Null, Value::Null, lock_type, Value::Number(min)];
+        result(&call(rpc.addr, "getutxos", params)).as_array().unwrap().len()
+    };
+    let smallest = node.utxos_of(&demo::MINER_LOCK, None, 3).iter().map(|(_, u)| u.amount).min().unwrap() as i64;
+    assert_eq!(filtered(Value::Null, smallest), 3);
+    assert_eq!(filtered(Value::Number(0), i64::MAX), 0);
+    assert_eq!(filtered(Value::Number(200), 0), 0);
     let none = call(rpc.addr, "getutxos", vec![Value::String(hex(&[0x77; 32]))]);
     assert_eq!(result(&none).as_array().unwrap().len(), 0);
     assert_eq!(error_code(&call(rpc.addr, "getutxos", vec![Value::String("12".into())])), -8);

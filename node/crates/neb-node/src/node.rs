@@ -21,7 +21,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use neb_block::Header;
 use neb_chain::block::check_shares_list;
 use neb_chain::state::{ChainState, HeaderError, MAX_REORG};
-use neb_chain::tx::Transaction;
 use neb_chain::{Block, Work as ChainWork};
 use neb_pow::shares::Model;
 use neb_store::BlockStore;
@@ -163,6 +162,7 @@ pub struct Node {
     pub(crate) book: Arc<AddrBook>,
     pub(crate) nonce: u64,
     pub(crate) start: crate::startup::Start,
+    pub(crate) unasked: Arc<Mutex<crate::resend::Unasked>>,
 }
 
 /// Unix time in seconds. Used for the clock rules of spec/node.md section 6.1
@@ -297,6 +297,7 @@ impl Node {
             book,
             nonce: local_nonce(),
             start,
+            unasked: Arc::default(),
         })
     }
 
@@ -608,6 +609,7 @@ impl Node {
             inner.side_models.remove(&b.id());
             inner.mempool.remove_confirmed(&b.txs);
         }
+        crate::resend::return_txs(&mut inner, &old_ids);
         for (old_id, old_model) in removed {
             inner.side_models.insert(old_id, old_model);
         }
@@ -705,23 +707,6 @@ impl Node {
             Err(NodeError::Header(_) | NodeError::BadProof(_)) => Err(2),
             Err(_) => Err(3),
         }
-    }
-
-    /// Adds a transaction to the mempool and announces it. A transaction
-    /// already in the mempool is returned as accepted.
-    pub fn submit_tx(&self, tx: Transaction) -> Result<[u8; 32], NodeError> {
-        let id = tx.txid();
-        let mut inner = self.inner.lock().expect("node lock");
-        if inner.mempool.tx(&id).is_some() {
-            return Ok(id);
-        }
-        {
-            let NodeInner { state, mempool, .. } = &mut *inner;
-            mempool.accept(state, &tx).map_err(|e| NodeError::Connect(e.to_string()))?;
-        }
-        drop(inner);
-        self.announce(InvKind::Tx, &[id], None);
-        Ok(id)
     }
 
     /// Sends an `inv` of `ids` to every peer except the session `except`.

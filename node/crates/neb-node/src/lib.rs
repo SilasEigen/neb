@@ -16,6 +16,7 @@ pub mod miners;
 pub mod node;
 pub mod p2p;
 pub mod params;
+pub mod resend;
 pub mod rpc;
 pub mod rpc_chain;
 pub mod shares;

@@ -25,6 +25,11 @@ pub const MAX_MEMPOOL_BYTES: usize = 300 * 1024 * 1024;
 /// wallet (10 000 base units) covers a transaction of up to 10 000 bytes.
 pub const MIN_FEE_PER_BYTE: u64 = 1;
 
+/// Smallest amount of an output of a transaction the pool takes, in base units: what it costs to spend the output,
+/// its 41 bytes and the 133 bytes of the input that spends it, at 3 times `MIN_FEE_PER_BYTE`. Local policy: a
+/// block may still include a smaller output.
+pub const MIN_OUTPUT: u64 = (41 + 133) * 3 * MIN_FEE_PER_BYTE;
+
 /// The fee rate of `fee` for `bytes`, in base units per 10^6 bytes, the key the
 /// pool orders and evicts by.
 fn fee_rate(fee: u64, bytes: usize) -> u128 {
@@ -50,6 +55,8 @@ pub enum MempoolError {
     Overspend,
     /// The fee is below `MIN_FEE_PER_BYTE` per byte.
     LowFee,
+    /// An output holds less than `MIN_OUTPUT`.
+    SmallOutput,
     /// The pool is full of transactions of an equal or higher fee rate.
     Full,
 }
@@ -66,6 +73,7 @@ impl std::fmt::Display for MempoolError {
             MempoolError::Witness { index, why } => write!(f, "input {index}: {why}"),
             MempoolError::Overspend => write!(f, "outputs above inputs"),
             MempoolError::LowFee => write!(f, "fee below {MIN_FEE_PER_BYTE} base unit per byte"),
+            MempoolError::SmallOutput => write!(f, "an output below {MIN_OUTPUT} base units"),
             MempoolError::Full => write!(f, "mempool is full of transactions with an equal or higher fee rate"),
         }
     }
@@ -181,6 +189,9 @@ impl Mempool {
             }
             if out.lock_type != LOCK_SINGLE && out.lock_type != LOCK_MULTISIG {
                 return Err(MempoolError::Shape("unknown lock type"));
+            }
+            if out.amount < MIN_OUTPUT {
+                return Err(MempoolError::SmallOutput);
             }
         }
         let sum_out: u128 = tx.outputs.iter().map(|o| o.amount as u128).sum();

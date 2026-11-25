@@ -20,6 +20,17 @@ impl Node {
     pub fn utxos_of(&self, lock: &[u8; 32], after: Option<OutPoint>, limit: usize) -> Vec<(OutPoint, Utxo)> {
         self.inner.lock().expect("node lock").state.utxos_of(lock, after, limit)
     }
+
+    /// As `utxos_of`, for the outputs of the lock type of `only`, if one is given, that hold its amount or more.
+    pub fn utxos_where(
+        &self,
+        lock: &[u8; 32],
+        after: Option<OutPoint>,
+        limit: usize,
+        only: (Option<u8>, u64),
+    ) -> Vec<(OutPoint, Utxo)> {
+        self.inner.lock().expect("node lock").state.utxos_where(lock, after, limit, only)
+    }
 }
 
 fn object(fields: Vec<(&str, Value)>) -> Value {
@@ -121,11 +132,13 @@ pub(crate) fn gettransaction(node: &Node, params: &[Value]) -> Result<Value, Rpc
     Ok(object(fields))
 }
 
-/// `getutxos lock [limit] [after txid, after index]`. Without a limit the call gives every output of the lock and
+/// `getutxos lock [limit] [after txid, after index] [locktype] [minamount]`. Without a limit the call gives every output of the lock and
 /// fails above `MAX_UTXOS`, as before. With a limit it gives at most that many, after the outpoint that is named:
 /// a caller reads a large lock by pages, giving the last outpoint of a page to get the next, until a page is
 /// shorter than the limit. Pages are read one call at a time, so a block that connects between two calls can move
-/// outputs in or out: read again from the start for an exact view.
+/// outputs in or out: read again from the start for an exact view. With a lock type, a minimum amount or both,
+/// the pages hold only the outputs of that lock type that hold that amount or more; `null` stands for a page
+/// start or a lock type that is not given.
 pub(crate) fn getutxos(node: &Node, params: &[Value]) -> Result<Value, RpcError> {
     let text = required_str(params, 0, "lock")?;
     let lock = parse_hex32(text).ok_or_else(|| RpcError::new(-8, "lock must be 64 hex characters"))?;
@@ -144,14 +157,29 @@ pub(crate) fn getutxos(node: &Node, params: &[Value]) -> Result<Value, RpcError>
                 .filter(|n| (1..=MAX_UTXOS).contains(n))
                 .ok_or_else(|| RpcError::new(-32602, format!("limit must be 1 to {MAX_UTXOS}")))?;
             let after = match (params.get(2), params.get(3)) {
-                (None, None) => None,
+                (None | Some(Value::Null), None | Some(Value::Null)) => None,
                 (Some(Value::String(txid)), Some(Value::Number(index))) => Some(OutPoint {
                     txid: parse_hex32(txid).ok_or_else(|| RpcError::new(-8, "after txid must be 64 hex characters"))?,
                     index: u32::try_from(*index).map_err(|_| RpcError::new(-8, "after index out of range"))?,
                 }),
                 _ => return Err(RpcError::new(-32602, "the page start is a txid and an index")),
             };
-            node.utxos_of(&lock, after, limit)
+            let lock_type = match params.get(4) {
+                None | Some(Value::Null) => None,
+                Some(t) => Some(
+                    t.as_i64()
+                        .and_then(|t| u8::try_from(t).ok())
+                        .ok_or_else(|| RpcError::new(-32602, "locktype must be 0 to 255"))?,
+                ),
+            };
+            let min_amount = match params.get(5) {
+                None | Some(Value::Null) => 0,
+                Some(a) => a
+                    .as_i64()
+                    .and_then(|a| u64::try_from(a).ok())
+                    .ok_or_else(|| RpcError::new(-32602, "minamount must be an amount in base units"))?,
+            };
+            node.utxos_where(&lock, after, limit, (lock_type, min_amount))
         }
     };
     let outputs = found.into_iter().map(|(op, utxo)| {

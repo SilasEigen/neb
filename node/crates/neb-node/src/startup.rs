@@ -9,8 +9,8 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock, mpsc};
 
 use neb_chain::Block;
 use neb_chain::state::{ChainParams, ChainState};
@@ -99,19 +99,32 @@ fn write_in_order(dir: &Path, bytes: &[u8], order: u64) {
     }
 }
 
-/// Writes the state file on a thread of its own when the tip is at a height that is due, or after a
-/// reorganisation (`always`). Called once the block was relayed and the miners have their job: the thread takes
-/// the node lock for the time of the copy, never for the disk.
+/// The nodes whose state file is due, read by the one thread that writes it.
+static DUE: OnceLock<mpsc::Sender<Node>> = OnceLock::new();
+
+/// Writes the state file when the tip is at a height that is due, or after a reorganisation (`always`). Called
+/// once the block was relayed and the miners have their job. One thread, started at the first call, does every
+/// write into one buffer that it keeps, so no memory is taken and given back at each write; it takes the node
+/// lock for the time of the copy, never for the disk.
 pub(crate) fn save_state(node: &Node, height: u32, always: bool) {
     if always || height.is_multiple_of(STATE_EVERY) {
-        let node = node.clone();
-        std::thread::spawn(move || {
-            let (bytes, dir, order) = {
-                let inner = node.inner.lock().expect("node lock");
-                (inner.state.snapshot(), inner.store.dir().to_path_buf(), TAKEN.fetch_add(1, Ordering::SeqCst) + 1)
-            };
-            write_in_order(&dir, &bytes, order);
+        let due = DUE.get_or_init(|| {
+            let (due, nodes) = mpsc::channel::<Node>();
+            std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                for node in nodes {
+                    let (dir, order) = {
+                        let inner = node.inner.lock().unwrap_or_else(|e| e.into_inner());
+                        inner.state.snapshot_into(&mut bytes);
+                        (inner.store.dir().to_path_buf(), TAKEN.fetch_add(1, Ordering::SeqCst) + 1)
+                    };
+                    drop(node);
+                    write_in_order(&dir, &bytes, order);
+                }
+            });
+            due
         });
+        let _ = due.send(node.clone());
     }
 }
 

@@ -519,6 +519,17 @@ fn mempool_refuses_a_fee_below_the_minimum() {
     assert_eq!(pool.accept(&state, &spend(&state, out, &sk, amount - 10_000)), Ok(10_000));
 }
 
+// An output below what its spend costs is not taken; the smallest amount that is taken passes.
+#[test]
+fn mempool_refuses_an_output_below_the_minimum() {
+    let sk = key(9);
+    let (state, out, _) = chain_with_two_outputs(&sk);
+    let mut pool = Mempool::with_limit(10_000_000);
+    let small = spend(&state, out, &sk, crate::mempool::MIN_OUTPUT - 1);
+    assert_eq!(pool.accept(&state, &small), Err(MempoolError::SmallOutput));
+    assert!(pool.accept(&state, &spend(&state, out, &sk, crate::mempool::MIN_OUTPUT)).is_ok());
+}
+
 // A full pool takes a transaction of a higher fee rate by evicting the lowest one, and refuses a lower one.
 #[test]
 fn a_full_mempool_evicts_the_lowest_fee_rate() {

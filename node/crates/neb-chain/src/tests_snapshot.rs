@@ -132,3 +132,38 @@ fn a_reorganisation_rebuilds_the_models_only_when_it_needs_them() {
     assert!(state.model_at(5).is_none(), "the models were rebuilt from the genesis block");
     assert!(state.model_at(71).is_some() && state.model_at(70).is_some() && state.model_at(69).is_some());
 }
+
+// The outputs of a lock come from the list of its outpoints: they are those a walk of the whole set gives, in one
+// call, by pages and with the two filters, on a state that connected and removed blocks and on one read back.
+#[test]
+fn the_outputs_of_a_lock_are_those_a_walk_of_the_set_gives() {
+    let mut state = new_state();
+    let blocks = demo_chain(&mut state, 30);
+    state.disconnect_tip().expect("disconnect");
+    state.disconnect_tip().expect("disconnect");
+    let mut chain = vec![demo::genesis(T0)];
+    chain.extend_from_slice(&blocks[..28]);
+    let read =
+        ChainState::from_snapshot(demo::demo_params(T0, demo::PROJECT_LOCK), chain, &state.snapshot()).expect("read");
+    for state in [&state, &read] {
+        let locks: std::collections::BTreeSet<[u8; 32]> = state.utxos().values().map(|u| u.lock_data).collect();
+        assert!(locks.len() >= 2);
+        for lock in locks {
+            let walk: Vec<_> =
+                state.utxos().iter().filter(|(_, u)| u.lock_data == lock).map(|(op, u)| (*op, u.clone())).collect();
+            assert_eq!(state.utxos_of(&lock, None, usize::MAX), walk);
+            let (mut pages, mut after) = (Vec::new(), None);
+            loop {
+                let page = state.utxos_of(&lock, after, 3);
+                let Some((last, _)) = page.last() else { break };
+                after = Some(*last);
+                pages.extend(page);
+            }
+            assert_eq!(pages, walk);
+            let (lock_type, least) = (walk[0].1.lock_type, walk.iter().map(|(_, u)| u.amount).max().unwrap());
+            let large: Vec<_> = walk.iter().filter(|(_, u)| u.amount >= least).cloned().collect();
+            assert_eq!(state.utxos_where(&lock, None, usize::MAX, (Some(lock_type), least)), large);
+            assert!(state.utxos_where(&lock, None, usize::MAX, (Some(200), 0)).is_empty());
+        }
+    }
+}

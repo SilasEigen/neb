@@ -6,6 +6,22 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+Same protocol, network, genesis and dataset file as 1.0.8. No consensus rule changes: what follows is relay and
+JSON-RPC policy.
+
+- Node: one thread writes the state file from one buffer that it keeps, where each write started a thread and
+  took a buffer of its own.
+- JSON-RPC: `getutxos` reads the outputs of the lock that is asked, from a list of the outpoints of each lock,
+  where it walked the whole set of unspent outputs under the node lock. It takes two more optional parameters, a
+  lock type and a minimum amount. The state file is unchanged: the list is rebuilt when the file is read.
+- Mempool: a transaction with an output below 522 base units is not taken or relayed. That is what the spend of an
+  output costs: its 41 bytes and the 133 bytes of the input that spends it, at 3 base units per byte. A block that
+  holds such an output is valid.
+- Node: the transactions of the blocks a reorganisation removes return to the mempool, except those the new branch
+  holds or conflicts with.
+- Node: a transaction given to `sendrawtransaction` is announced again every minute until a peer asks for it or it
+  leaves the mempool, so a node without a peer at that moment does not lose it.
+
 ## [1.0.8] - 2026-11-25
 
 Same protocol, network, genesis and dataset file as 1.0.7, and the nodes and miners of 1.0.2 to 1.0.8 work together.

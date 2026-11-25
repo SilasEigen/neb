@@ -14,7 +14,6 @@
 //! beyond the shape needed to build the state (spec/node.md section 6.6).
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::ops::Bound;
 use std::sync::Arc;
 
 /// A block removed by a reorganisation: its id and its state.
@@ -177,6 +176,7 @@ impl std::fmt::Display for HeaderError {
 
 impl std::error::Error for HeaderError {}
 
+mod coins;
 mod snapshot;
 
 /// What a disconnect needs to undo one connected block. The block itself is
@@ -206,7 +206,7 @@ pub struct ChainState {
     /// The state (one model per slot) of each of the last `MODEL_DEPTH + 1`
     /// blocks of the best chain, the tip last (spec/shares.md section 11.4).
     models: VecDeque<Models>,
-    utxos: BTreeMap<OutPoint, Utxo>,
+    utxos: coins::Coins,
     // The three sums of spec/node.md section 6.7: U, C and F. u128 holds the
     // sum of any number of u64 amounts that can occur.
     unspent_total: u128,
@@ -234,7 +234,7 @@ impl ChainState {
         if !coinbase.is_coinbase() {
             return Err(ChainError::Genesis("first transaction is not the coinbase"));
         }
-        let mut utxos = BTreeMap::new();
+        let mut utxos = coins::Coins::default();
         let mut total: u128 = 0;
         let txid = coinbase.txid();
         for (index, out) in coinbase.outputs.iter().enumerate() {
@@ -300,15 +300,7 @@ impl ChainState {
     }
 
     pub fn utxos(&self) -> &BTreeMap<OutPoint, Utxo> {
-        &self.utxos
-    }
-
-    /// The first `limit` unspent outputs whose lock data is `lock`, in outpoint order, after the outpoint `after`
-    /// when one is given. Reads the set until the limit.
-    pub fn utxos_of(&self, lock: &[u8; 32], after: Option<OutPoint>, limit: usize) -> Vec<(OutPoint, Utxo)> {
-        let start = after.map_or(Bound::Unbounded, Bound::Excluded);
-        let owned = self.utxos.range((start, Bound::Unbounded)).filter(|(_, u)| u.lock_data == *lock);
-        owned.take(limit).map(|(op, u)| (*op, u.clone())).collect()
+        self.utxos.map()
     }
 
     pub fn unspent_total(&self) -> u128 {

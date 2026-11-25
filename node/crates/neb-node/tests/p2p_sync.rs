@@ -374,39 +374,21 @@ fn the_chain_survives_a_restart() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-// A signed spend of the genesis output, accepted by A after 101 blocks (the
-// coinbase has matured), is announced to B and fetched by `getdata`.
-#[test]
-fn a_transaction_relays_to_the_second_node() {
-    let sk = SigningKey::from_bytes(&[9u8; 32]);
-    let dir_a = temp_dir("tx-a");
-    let dir_b = temp_dir("tx-b");
-    let a =
-        Node::open(NodeConfig { network: test_network_to(lock_of(&sk)), data_dir: dir_a.clone(), verify_pow: false })
-            .expect("a");
-    let prefix = {
-        let mut blocks = Vec::new();
-        let mut parent = demo::genesis_to(T0, lock_of(&sk)).id();
-        for height in 1..=101 {
-            let block = demo::block(parent, T0 + 60 * height, 0xC280_0000, 3000 + height, vec![coinbase(height)]);
-            parent = block.id();
-            blocks.push(block);
-        }
-        blocks
-    };
-    for block in &prefix {
-        a.accept_block(block.clone()).expect("connect");
+/// A node whose genesis output belongs to `sk`, with 101 blocks on it so that the output is mature, the id of
+/// block 101, and a signed spend of that output.
+fn node_with_a_spend(tag: &str, sk: &SigningKey) -> (Node, PathBuf, [u8; 32], Transaction) {
+    let dir = temp_dir(tag);
+    let node =
+        Node::open(NodeConfig { network: test_network_to(lock_of(sk)), data_dir: dir.clone(), verify_pow: false })
+            .expect("node");
+    let mut parent = demo::genesis_to(T0, lock_of(sk)).id();
+    for height in 1..=101 {
+        let block = demo::block(parent, T0 + 60 * height, 0xC280_0000, 3000 + height, vec![coinbase(height)]);
+        parent = block.id();
+        node.accept_block(block).expect("connect");
     }
-    let b =
-        Node::open(NodeConfig { network: test_network_to(lock_of(&sk)), data_dir: dir_b.clone(), verify_pow: false })
-            .expect("b");
-    let handle = a.start_p2p("127.0.0.1:0".parse().unwrap()).expect("listen");
-    b.connect_peer(handle.addr).expect("connect");
-    assert!(wait_for(|| b.height() == 101, 20), "B did not sync");
-
-    let genesis_cb = demo::genesis_to(T0, lock_of(&sk)).txs[0].txid();
-    let op = OutPoint { txid: genesis_cb, index: 0 };
-    let spent = a.utxo(&op).expect("utxo").as_txout();
+    let op = OutPoint { txid: demo::genesis_to(T0, lock_of(sk)).txs[0].txid(), index: 0 };
+    let spent = node.utxo(&op).expect("utxo").as_txout();
     let mut tx = Transaction {
         version: 1,
         inputs: vec![TxIn { prev_txid: op.txid, prev_index: op.index, witness: Vec::new() }],
@@ -416,12 +398,27 @@ fn a_transaction_relays_to_the_second_node() {
             lock_data: lock_of(&SigningKey::from_bytes(&[7u8; 32])),
         }],
     };
-    let msg = tx.sighash(&a.chain_id(), 0, &spent);
-    let sig = sk.sign(&msg);
+    let sig = sk.sign(&tx.sighash(&node.chain_id(), 0, &spent));
     let mut witness = Vec::new();
     witness.extend_from_slice(&sk.verifying_key().to_bytes());
     witness.extend_from_slice(&sig.to_bytes());
     tx.inputs[0].witness = witness;
+    (node, dir, parent, tx)
+}
+
+// A signed spend of the genesis output, accepted by A after 101 blocks (the
+// coinbase has matured), is announced to B and fetched by `getdata`.
+#[test]
+fn a_transaction_relays_to_the_second_node() {
+    let sk = SigningKey::from_bytes(&[9u8; 32]);
+    let (a, dir_a, _, tx) = node_with_a_spend("tx-a", &sk);
+    let dir_b = temp_dir("tx-b");
+    let b =
+        Node::open(NodeConfig { network: test_network_to(lock_of(&sk)), data_dir: dir_b.clone(), verify_pow: false })
+            .expect("b");
+    let handle = a.start_p2p("127.0.0.1:0".parse().unwrap()).expect("listen");
+    b.connect_peer(handle.addr).expect("connect");
+    assert!(wait_for(|| b.height() == 101, 20), "B did not sync");
     let txid = a.submit_tx(tx).expect("submit");
     assert!(wait_for(|| b.has_tx(&txid), 10), "transaction did not relay");
     drop(handle);
@@ -429,6 +426,53 @@ fn a_transaction_relays_to_the_second_node() {
     drop(b);
     let _ = std::fs::remove_dir_all(&dir_a);
     let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+// A transaction handed to a node that has no peer is announced again, and is no longer once a peer asked for it.
+#[test]
+fn a_transaction_submitted_without_a_peer_is_announced_again() {
+    let sk = SigningKey::from_bytes(&[9u8; 32]);
+    let (a, dir_a, _, tx) = node_with_a_spend("resend-a", &sk);
+    let txid = a.submit_tx(tx).expect("submit");
+    let dir_b = temp_dir("resend-b");
+    let b =
+        Node::open(NodeConfig { network: test_network_to(lock_of(&sk)), data_dir: dir_b.clone(), verify_pow: false })
+            .expect("b");
+    let handle = a.start_p2p("127.0.0.1:0".parse().unwrap()).expect("listen");
+    b.connect_peer(handle.addr).expect("connect");
+    assert!(wait_for(|| b.height() == 101, 20), "B did not sync");
+    assert!(!b.has_tx(&txid), "the only announcement was made before B connected");
+    assert_eq!(a.resend_unasked(), 1);
+    assert!(wait_for(|| b.has_tx(&txid), 10), "the transaction was not announced again");
+    assert!(wait_for(|| a.resend_unasked() == 0, 10), "B asked for it: nothing is left to announce");
+    drop(handle);
+    drop(a);
+    drop(b);
+    let _ = std::fs::remove_dir_all(&dir_a);
+    let _ = std::fs::remove_dir_all(&dir_b);
+}
+
+// The transaction of a block that a heavier branch removes returns to the mempool, and leaves it again when a block
+// of the new branch holds it.
+#[test]
+fn a_transaction_of_a_removed_block_returns_to_the_mempool() {
+    let sk = SigningKey::from_bytes(&[9u8; 32]);
+    let (node, dir, tip, tx) = node_with_a_spend("reorg-tx", &sk);
+    let txid = tx.txid();
+    let block = |parent, height: u32, salt, txs| demo::block(parent, T0 + 60 * height, 0xC280_0000, salt, txs);
+    node.accept_block(block(tip, 102, 1, vec![coinbase(102), tx.clone()])).expect("block with the transaction");
+    assert!(!node.has_tx(&txid));
+    // two blocks without it on block 101
+    let other = block(tip, 102, 2, vec![coinbase(102)]);
+    let next = block(other.id(), 103, 2, vec![coinbase(103)]);
+    node.accept_block(other).expect("side block");
+    node.accept_block(next.clone()).expect("heavier branch");
+    assert_eq!((node.height(), node.tip_id()), (103, next.id()));
+    assert!(node.has_tx(&txid), "the transaction of the removed block is in the mempool again");
+    node.accept_block(block(next.id(), 104, 2, vec![coinbase(104), tx])).expect("block with the transaction");
+    assert!(!node.has_tx(&txid));
+    drop(node);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 // The dialled address, not only the count, identifies a connected peer.

@@ -36,8 +36,13 @@ The weights of slot 0 (Kepler, 784-128-10, signed 4-bit) were read with the `get
 
 The forward pass is the integer one of `spec/shares.md`. The input is the 784 values of `tools/make_datasets.py`
 (583 bins of the whole orbit and 201 bins around the transit, 8 levels). The score of a signal is the planet output
-minus the false-positive output. `fetch_model.py` fetches the current weights and checks them against their hash
-with the oracle of `pow/oracle`.
+minus the false-positive output. `fetch_model.py` fetches the weights of that network from a node and checks them
+against their hash with the oracle of `pow/oracle`.
+
+The mainnet trains a convolutional network on the same 784 values (dataset `kepler-v2`, `spec/shares.md` section
+11.7). `score.py` scores one star with either network. A copy of the mainnet weights at block 10570 is in
+`results/neb-kepler-mainnet-block10570.json` (weights hash
+`24c775bda375762782558f9fffbdda468a93d6ece1bf244e98b5cd75b818f2d5`).
 
 ## Method
 
@@ -166,6 +171,10 @@ Later checks:
   0), and VSX lists no variable star within 30 arcsec.
 - **TESS:** the star was observed in sectors 14, 40, 41, 54, 55, 74, 75, 81 and 82, but the G = 12.7 neighbour,
   about 90 times brighter, falls in the same 21-arcsec TESS pixel; the dip would be diluted to a few tens of ppm.
+- **Mainnet model:** the mainnet's convolutional network also answers planet candidate. At block 10570 its two
+  output sums are -50 and +43, a margin of +93; among the chain's 2,333 test signals, 3.0% of the false positives
+  and 62.9% of the planets reach that margin. The margin moves as the miners train: +77 at block 10621. It is not
+  on the same scale as the score in the table (+8, block 1428).
 
 ## Running it
 
@@ -173,7 +182,7 @@ Python 3.12 or later (numpy 2.5).
 
 ```
 pip install -r requirements.txt
-python fetch_model.py              # optional: current weights; the results use results/neb-kepler-block1428.npz
+python fetch_model.py              # optional, 784-128-10 only; the results use results/neb-kepler-block1428.npz
 python hunt.py --start 300 --n 2000
 python analyze.py
 python revet.py                    # season and shape tests on the survivors of a hunt made before them
@@ -181,6 +190,9 @@ python deep.py kic-006691030
 python neighbors.py kic-006691030
 python tpf.py kic-006691030
 python candidate.py
+python score.py kic-006691030      # one star's score, block 1428
+python score.py kic-006691030 --model results/neb-kepler-mainnet-block10570.json
+python score.py kic-006691030 --rpc https://neuralenginebyte.org/rpc    # the mainnet model, at the tip
 ```
 
 Downloads go to `data/` next to the scripts (ignored by git), or to the directory in `NEB_KBONUS_DATA`. A Kepler
@@ -207,7 +219,8 @@ survive. The bulk download list of Kepler Bonus (175 MB) is fetched once.
 | `revet.py` | the season and shape tests on the survivors of `results/hunt.csv` |
 | `deep.py`, `neighbors.py`, `tpf.py` | follow-up of a lead |
 | `candidate.py` | transit fit, density, phase curve, vetting sheet |
-| `results/` | the outputs used above and the model weights at block 1428 |
+| `score.py` | scores one star with a model file or a node's model |
+| `results/` | the outputs used above, the model weights at block 1428, the mainnet weights at block 10570 |
 
 ## License
 

@@ -51,6 +51,8 @@ def main():
     a = p.parse_args()
 
     m = rpc(a.rpc, "getmodel", [0])
+    if m["dataset"] != "kepler":
+        raise SystemExit("slot 0 holds the dataset %s, not the 784-128-10 network: use score.py --rpc" % m["dataset"])
     packed = bytes.fromhex(m["weights"])
     if blake3(b"neb-model-weights" + packed).hex() != m["weightshash"]:
         raise SystemExit("the weights do not match the weights hash given by the node")

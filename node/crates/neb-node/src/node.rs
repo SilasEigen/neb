@@ -163,6 +163,7 @@ pub struct Node {
     pub(crate) nonce: u64,
     pub(crate) start: crate::startup::Start,
     pub(crate) unasked: Arc<Mutex<crate::resend::Unasked>>,
+    pub(crate) verifying: Arc<crate::verifying::Verifying>,
 }
 
 /// Unix time in seconds. Used for the clock rules of spec/node.md section 6.1
@@ -298,6 +299,7 @@ impl Node {
             nonce: local_nonce(),
             start,
             unasked: Arc::default(),
+            verifying: Arc::default(),
         })
     }
 
@@ -518,6 +520,11 @@ impl Node {
             for _ in 0..1 + block.shares.len() {
                 budget.wait();
             }
+        }
+        // One check per block: a session that brings a block another session is checking waits for its result.
+        let _claim = self.verifying.claim(id);
+        if self.inner.lock().expect("node lock").blocks.contains_key(&id) {
+            return Ok(BlockOutcome::AlreadyKnown);
         }
         let model = neb_chain::verify_block(
             &self.network.chain,

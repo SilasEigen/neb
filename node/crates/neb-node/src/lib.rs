@@ -22,6 +22,7 @@ pub mod rpc_chain;
 pub mod shares;
 pub mod startup;
 pub mod style;
+mod verifying;
 
 pub use node::{BlockOutcome, Node, NodeConfig, NodeError};
 pub use params::{Network, NetworkParams, testnet};

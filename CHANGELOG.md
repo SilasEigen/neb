@@ -6,6 +6,10 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+- Node: the proof and the shares of a block are checked once, where each peer session that received the block
+  checked them at the same time. A relay with many peers no longer fills its processors for seconds on a block
+  that lists many shares.
+
 ## [1.0.9] - 2026-11-25
 
 Same protocol, network, genesis and dataset file as 1.0.8, and the nodes and miners of 1.0.2 to 1.0.9 work together.

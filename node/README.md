@@ -15,6 +15,7 @@ Rust implementation of the NEB node, wallet and miners. The normative text is `s
 | `neb-node` | The `neb-node` binary: network parameters of the testnet, peers with sequential block sync, work service, loopback JSON-RPC, daemon. |
 | `neb-cpuminer` | The `neb-miner-cpu` binary: share attempts on the model of the chain, over the work service. Its session (frames, current job, counters, the blocks found) and its terminal dashboard are shared with the GPU miner. |
 | `neb-gpuminer` | The `neb-miner-gpu` binary: the same attempts on CUDA devices (`pow/gpu`), checked on the CPU before they are sent, and the readings of the card for the dashboard. Built with `--features cuda`; without it the crate has no binary. |
+| `neb-metalminer` | The `neb-miner-metal` binary: the same attempts on an Apple GPU with Metal (`crates/neb-metalminer/src/neb_share.metal`), checked with the reference before they are sent. macOS on Apple silicon only; on other platforms the crate builds and its entry points say why they cannot run. |
 | `neb-wallet` | The `neb-wallet` binary: keys, bech32m `neb1` addresses, coin selection and Ed25519 signing through the JSON-RPC of the node. |
 
 ## Build and test
@@ -26,7 +27,7 @@ cargo build --release --locked
 cargo test --locked
 ```
 
-A C compiler is required: `neb-pow` compiles `pow/ref`, which is the only copy of the proof-of-work and training-share code. The binaries are in `target/release`. `cargo build --release --locked -p neb-gpuminer --features cuda` also builds `neb-miner-gpu` (CUDA toolkit required, see `docs/testnet.md`).
+A C compiler is required: `neb-pow` compiles `pow/ref`, which is the only copy of the proof-of-work and training-share code. The binaries are in `target/release`. `cargo build --release --locked -p neb-gpuminer --features cuda` also builds `neb-miner-gpu` (CUDA toolkit required, see `docs/testnet.md`). `cargo build --release --locked -p neb-metalminer` builds `neb-miner-metal` on macOS; no Xcode is needed, because the Metal kernel is compiled by the device at start.
 
 The built-in checks run without a network: `neb-node --selftest`, `--shares-selftest`, `--chain-selftest` and `--work-selftest`.
 

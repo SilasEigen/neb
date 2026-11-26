@@ -3,7 +3,7 @@ light curves (TGLC, Han & Brandt 2023) read from the public MAST bucket. Each li
 repeating dip, the detection tests run, and the TESS model of the main network says eclipse or junk. Every star is
 also run with its flux flipped: what noise alone gets called an eclipse.
 
-    python hunt_faint.py --fields 120 [--per 50]      ->  results/hunt-faint.csv, results/hunt-faint.json
+    python hunt_faint.py --fields 120 [--per 50] [--out PATH]      ->  results/hunt-faint.csv, results/hunt-faint.json
 
 The stars are small groups of neighbors on the sky: each field is a random place in the file tree of the sector
 (seed 2026), which is ordered by Gaia identifier, and the next `per` light curves from there. A call is a signal
@@ -29,7 +29,6 @@ import tf_common as T  # noqa: E402
 
 BUCKET = "https://stpubdata.s3.amazonaws.com/"
 ROOT = "mast/hlsp/tglc/s%04d/" % T.SECTOR
-OUT = os.path.join(T.RES, "hunt-faint.csv")
 KEYS = ("period", "t0", "dur_h", "n", "depth_ppm", "mes", "odd_even", "secondary", "fail", "detected", "eclipse", "margin")
 FIELDS = ["gaia", "tic", "ra", "dec", "tmag", "camccd", "points"] + ["%s_%s" % (tag, k) for tag in ("real", "inv") for k in KEYS]
 FAINT = 13.5  # the limit of the Quick-Look Pipeline light curves
@@ -93,7 +92,9 @@ def main():
     p.add_argument("--per", type=int, default=50)
     p.add_argument("--chunk", type=int, default=200)
     p.add_argument("--workers", type=int, default=8)
+    p.add_argument("--out", default=os.path.join(T.RES, "hunt-faint"), help="path of the .csv and .json to write, without the extension")
     a = p.parse_args()
+    OUT = a.out + ".csv"
     keys = fields(a.fields, a.per, np.random.default_rng(2026))
     done = {r["gaia"] for r in csv.DictReader(open(OUT))} if os.path.exists(OUT) else set()
     todo = [k for k in keys if re.search(r"gaiaid-(\d+)", k).group(1) not in done]
@@ -112,7 +113,7 @@ def main():
             print("%d done, %.1f s" % (min(c + a.chunk, len(todo)), time.time() - start), flush=True)
     if not todo:
         return  # nothing ran: the timing of the last run stays
-    with open(os.path.join(T.RES, "hunt-faint.json"), "w") as f:
+    with open(a.out + ".json", "w") as f:
         json.dump({"sector": T.SECTOR, "light_curves": len(todo), "seconds": round(time.time() - start, 1), "processes": a.workers,
                    "model_block": height, "weights_hash": weightshash}, f)
 

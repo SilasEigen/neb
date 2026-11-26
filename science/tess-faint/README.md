@@ -13,8 +13,12 @@ and a copy of the model weights.
 
 ## Status
 
-One signal passed every step: an eclipsing binary, not a planet. The model of the chain did not help on these stars
-(see [The control](#the-control)); the pixel test did the sorting. One sector and one case give no rate.
+Two runs on sector 40, 6,221 faint stars in all. Every signal the pixel test leaves on its star and that the other
+checks confirm is an eclipsing binary, none a planet: one in the first run, absent from the catalogs queried, and five
+in the second, all five already cataloged. The search alone does not sort: flipped light curves give as many dips as
+the real ones, and the model of the chain did not help on these stars (see [The control](#the-control)). The pixel
+test does the sorting, and [a check on published candidates](#a-check-on-published-candidates) measures how it
+behaves on known planets.
 
 ## Data and credit
 
@@ -23,7 +27,8 @@ One signal passed every step: an eclipsing binary, not a planet. The model of th
 - TESS full-frame images (NASA), cut out with TESScut at MAST (Brasseur et al. 2019).
 - TESS Input Catalog and Gaia DR3 (ESA), through MAST and VizieR.
 - NASA Exoplanet Archive: the table of TESS objects of interest.
-- VizieR (CDS) for the catalogs of variable stars listed below.
+- VizieR (CDS) for the catalogs of variable stars listed below and for Gaia DR3.
+- T16 candidate catalog: Roth et al. (2026), Harvard Dataverse, [doi:10.7910/DVN/CWEUGW](https://doi.org/10.7910/DVN/CWEUGW).
 
 ## The model
 
@@ -53,7 +58,8 @@ searched here are fainter, with light curves from another pipeline.
    whatever is called there is noise.
 7. **Pixel test** (`pixel_test.py`). For each call, an 11 x 11 pixel cutout of the full-frame images and a
    difference image: pixels just outside the eclipse minus pixels inside it. The centroid of its peak says which
-   star dims. A TESS pixel is 21 arcsec wide. Below 4 sigma the test says nothing.
+   star dims: the test reads the Gaia DR3 stars within 45 arcsec and names the one nearest to the centroid among
+   those bright enough to make the dip. A TESS pixel is 21 arcsec wide. Below 4 sigma the test says nothing.
 8. **Follow-up** (`follow_up.py`) of what stays on its star: depth of the odd and even events, the same dip in the
    other sectors, and the catalogs.
 
@@ -73,7 +79,7 @@ searched here are fainter, with light curves from another pipeline.
 924 of the 1,099 detections have a period between 0.95 and 1.05 days. That is a systematic of these light curves,
 not a signal, and the pixel test puts none of those calls on its star.
 
-The search took 1,189 seconds for the 2,454 light curves with 8 processes on one desktop processor.
+The search took 1,189 seconds for the 2,454 light curves with 8 processes.
 
 ### The control
 
@@ -110,13 +116,91 @@ ZTF periodic variables, ATLAS, Catalina, the TESS eclipsing binary catalog, VSX.
 interest, and the Kepler Eclipsing Binary Catalog has no entry for KIC 3740108. SIMBAD and the literature were not
 searched, so this is a star absent from those lists, not a new one.
 
+## Second run: 5,000 light curves
+
+The same search on 5,000 other light curves of sector 40 (`--fields 5000`, stopped after 5,000), with the order the
+first run asked for: the pixel test runs on every detection, whatever the model says. Detections with a period
+within 0.05 day of one day are set aside first.
+
+| step | light curves |
+|---|---|
+| read | 5,000 |
+| faint and long enough | 4,244 |
+| detected | 641 |
+| detected, period away from one day | 405 |
+| pixel test: no signal above 4 sigma | 358 |
+| pixel test: off target | 31 |
+| pixel test: cutout off the chip | 10 |
+| pixel test: on target | 4 |
+| pixel test: blend | 2 |
+
+The search took 1,312 seconds with 8 processes, the pixel test 393 seconds with 4 threads. On the flipped light
+curves the search detects 830 signals, 409 of them away from one day: as many as on the real ones. A detection
+alone says nothing here.
+
+The six signals the pixel test keeps (on target or blend) and one it traced to a neighbor:
+
+| Gaia DR3 | T | period (d) | depth | verdict | catalogs |
+|---|---|---|---|---|---|
+| 4518328655090595456 | 14.9 | 0.918 | 49% | on target | Gaia DR3 eclipsing binary, VSX type E, same period |
+| 4518328655080966016 | 14.4 | 0.918 | 30% | blend | the star above, 3 arcsec away |
+| 4580894405750393344 | 15.1 | 0.687 | 26% | on target | ZTF J175724.83+242752.5, type EA, same period |
+| 2040467773254816000 | 14.8 | 0.899 | 51% | on target | WISE J185444.6+283659, type EW, half this period |
+| 2028132038769311104 | 14.3 | 1.268 | 25% | blend | ZTF J194224.01+273301.2, type EA, twice this period |
+| 2100930673578962816 | 15.1 | 0.677 | 26% | off target | ZTF J191828.02+384639.7, type EW, same period, 16 arcsec away |
+| 4508383194455845632 | 13.6 | 1.576 | 6.5% | on target | none within 240 arcsec at this period |
+
+Five eclipsing binaries, all already cataloged, found with no catalog given to the search. The model of the chain
+calls an eclipse on each of the six kept signals, and on 41 of the 399 others.
+
+The last row is not a result. The sum of the 3 x 3 raw pixels on the star does not show the dip in any of the four
+sectors that hold it (26, 40, 53, 80), sector 40 included: 1.7 to 2.0 times the scatter of the phase bins. A dip of
+6.5% on a star of T = 13.6 should show there. It may come from the light curve itself.
+
+The first version of the verdict looked only at the distance between the centroid and the target, with a limit of
+one pixel. It left the sixth row on target: the binary 16 arcsec away is inside that pixel. Naming the nearest Gaia
+star fixed it, and the first run gives the same counts with either rule.
+
+## A check on published candidates
+
+`calibrate_t16.py` runs the pixel test on candidates of the T16 project (Roth et al. 2026, ApJS 284, 19,
+[doi:10.3847/1538-4365/ae5b6c](https://doi.org/10.3847/1538-4365/ae5b6c); catalog at
+[doi:10.7910/DVN/CWEUGW](https://doi.org/10.7910/DVN/CWEUGW)): 11,143 candidates from sectors 1 to 13, 7,805 of them
+fainter than T = 13.5. Each candidate is tested in the sector where T16 found it, at its period, epoch and duration.
+The ground truth is the TESS objects of interest at the same period: confirmed and known planets must stay on
+their star.
+
+498 candidates, up to 40 drawn at random in each group and magnitude bin (`results/calibration-t16.csv`):
+
+| group | tested | on target | blend | off target | no signal | other |
+|---|---|---|---|---|---|---|
+| confirmed or known planets | 97 | 58 | 1 | 1 | 26 | 11 |
+| other objects of interest (PC, APC) | 127 | 67 | 5 | 2 | 44 | 9 |
+| false positives of the TOI list | 74 | 20 | 9 | 12 | 24 | 9 |
+| T16 candidates that are not objects of interest | 200 | 19 | 5 | 70 | 79 | 27 |
+
+"Other" is a cutout off the chip, a cutout the service did not return, or fewer than three events in the sector.
+
+What this shows: the test leaves 58 of the 60 known planets it decides on their star. With the first version of the
+verdict it rejected 4 of the 41 false positives it decided; with the nearest-star rule, 12, and it calls 9 a blend.
+A false positive of the TOI list is often an eclipsing binary on the target, so this group does not have to move off.
+
+What this does not show: that the 70 T16 candidates found off target are wrong. At these magnitudes the centroid is
+less precise than the quarter of a pixel the blend rule assumes, only 3 known planets fainter than T = 14.5 are in
+the sample, one sector is tested per candidate, and the result was not compared with the vetting plots T16
+published. It is a table to put next to theirs.
+
 ## Limits
 
-- One sector, 1,977 stars, one case. No rate of real eclipses or of false alarms can be read from it.
-- The pixel test left 28 of 56 calls undecided: at these magnitudes the difference image is often below 4 sigma.
-- The model runs before the pixel test here, and it should not: the control shows it calls noise an eclipse more
-  often than data. The next run puts the pixel test right after the detection tests.
-- No calibration on stars with a known answer at these magnitudes yet.
+- One sector, 6,221 stars, six eclipsing binaries, five of them already cataloged. No rate of real eclipses or of
+  false alarms can be read from it.
+- The pixel test leaves most signals undecided: 358 of 405 in the second run. At these magnitudes the difference
+  image is often below 4 sigma.
+- In the first run the model ran before the pixel test, and it should not: the control shows it calls noise an
+  eclipse more often than data. The second run puts the pixel test right after the detection tests.
+- The calibration has almost no ground truth fainter than T = 14.5.
+- The verdict asks VizieR for the Gaia stars around each decided signal. When VizieR does not answer, it falls back
+  on the distance to the target alone.
 
 ## Running it
 
@@ -126,6 +210,21 @@ Python 3.12 or later, with the packages of `science/kbonus/requirements.txt` (nu
 python hunt_faint.py --fields 120
 python pixel_test.py
 python follow_up.py 2099445748765925760
+```
+
+The second run, with outputs in a folder of your choice:
+
+```
+python hunt_faint.py --fields 5000 --out OUT/hunt
+python pixel_test.py --detections --hunt OUT/hunt.csv --out OUT/pixel.csv
+```
+
+The calibration needs `candidate_table.tab` of the T16 dataset and the `toi` table of the NASA Exoplanet Archive
+(columns toi, tid, tfopwg_disp, pl_orbper, as CSV in `toi.csv`), both in `data/t16/`:
+
+```
+python calibrate_t16.py --per-cell 40
+python calibrate_t16.py --summary
 ```
 
 `hunt_faint.py` skips the stars already in `results/hunt-faint.csv`; remove the file to run the search again. The
@@ -138,9 +237,10 @@ light curves of the calls go to `data/` next to the scripts (ignored by git), or
 |---|---|
 | `tf_common.py` | the model, the search set for one TESS sector, the views of the chain |
 | `hunt_faint.py` | the search, the detection tests, the model, the flipped control |
-| `pixel_test.py` | the difference image of each call |
+| `pixel_test.py` | the difference image of each call or detection, and the star nearest to its centroid |
+| `calibrate_t16.py` | the pixel test on published candidates, by group and magnitude |
 | `follow_up.py` | depth, other sectors and catalogs for one star |
-| `results/` | the outputs used above and the model weights at block 11457 |
+| `results/` | the outputs used above (`-5000` for the second run) and the model weights at block 11457 |
 
 ## License
 

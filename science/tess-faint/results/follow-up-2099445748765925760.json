@@ -1,0 +1,114 @@
+{
+ "gaia": "2099445748765925760",
+ "tic": "122061758",
+ "tmag": "13.938",
+ "ra": "289.461351",
+ "dec": "38.8666",
+ "period": 2.7452,
+ "t0": 2394.2759,
+ "dur_h": 4.0,
+ "depth": {
+  "all": [
+   0.23112,
+   0.00599,
+   150
+  ],
+  "odd": [
+   0.23583,
+   0.00794,
+   83
+  ],
+  "even": [
+   0.2267,
+   0.00909,
+   67
+  ],
+  "half_period": [
+   -0.00298,
+   0.00306,
+   164
+  ]
+ },
+ "sectors": [
+  {
+   "sector": 14,
+   "points": 717,
+   "cadence_min": 30,
+   "period": 2.747,
+   "depth": 0.0167,
+   "depth_over_scatter": 6.0
+  },
+  {
+   "sector": 40,
+   "points": 3917,
+   "cadence_min": 10,
+   "period": 2.7401,
+   "depth": 0.0211,
+   "depth_over_scatter": 12.8
+  },
+  {
+   "sector": 41,
+   "points": 3658,
+   "cadence_min": 10,
+   "period": 2.7446,
+   "depth": 0.0179,
+   "depth_over_scatter": 9.2
+  },
+  {
+   "sector": 54,
+   "points": 3571,
+   "cadence_min": 10,
+   "period": 2.7493,
+   "depth": 0.0094,
+   "depth_over_scatter": 3.3
+  },
+  {
+   "sector": 55,
+   "points": 3771,
+   "cadence_min": 10,
+   "period": 2.7378,
+   "depth": 0.0229,
+   "depth_over_scatter": 9.3
+  },
+  {
+   "sector": 74,
+   "points": 0
+  },
+  {
+   "sector": 75,
+   "points": 11678,
+   "cadence_min": 3,
+   "period": 2.7404,
+   "depth": 0.0188,
+   "depth_over_scatter": 16.1
+  },
+  {
+   "sector": 80,
+   "points": 11120,
+   "cadence_min": 3,
+   "period": 2.7392,
+   "depth": 0.0303,
+   "depth_over_scatter": 6.3
+  },
+  {
+   "sector": 81,
+   "points": 11033,
+   "cadence_min": 3,
+   "period": 2.734,
+   "depth": 0.0183,
+   "depth_over_scatter": 4.4
+  }
+ ],
+ "catalogs": {
+  "Gaia DR3 eclipsing binaries": [],
+  "Gaia DR3 two-body orbits": [],
+  "Gaia DR3 variable classes": [],
+  "ASAS-SN variables": [],
+  "ZTF periodic variables": [],
+  "ATLAS variables": [],
+  "Catalina periodic variables": [],
+  "TESS eclipsing binaries": [],
+  "VSX": [],
+  "TESS objects of interest": []
+ }
+}

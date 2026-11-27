@@ -6,6 +6,18 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+## [1.0.11] - 2026-11-27
+
+Same protocol, network, genesis and dataset file as 1.0.10, and the nodes and miners of 1.0.2 to 1.0.11 work together.
+No consensus rule changes, and the node code is the same as in 1.0.10. This release adds the sky search.
+Node and pool operators on 1.0.10: no action is needed.
+
+- New program `neb-sky`: it asks a batch server for light curves of faint TESS stars, searches them for repeating
+  dips and posts the result (`spec/sky-search.md`). It runs next to any miner and does not mine.
+- Miners: `neb-miner-cpu` and `neb-miner-gpu` take `--sky URL`, `--sky-threads N`, `--sky-address ADDRESS` and
+  `--sky-device TEXT`, and run the same search on processor threads. The search stays off until you pass `--sky`.
+- Science: the batch server, the sorting step and the pixel test queue are in `science/sky-search`.
+
 ## [1.0.10] - 2026-11-27
 
 Same protocol, network, genesis and dataset file as 1.0.9, and the nodes and miners of 1.0.2 to 1.0.10 work together.

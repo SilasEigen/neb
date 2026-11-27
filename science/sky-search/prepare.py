@@ -19,9 +19,9 @@ SCALE = 16  # units in one scatter of the hourly flux
 
 
 def slots(t, f):
-    """(int8 per hour from the first measurement, time of slot 0 in days): the flux as the box search of
+    """(int8 per hour from the first measurement, time of slot 0 in days, scatter): the flux as the box search of
     science/tess-faint reads it (running median removed, flares and gap edges dropped), the median of each hour,
-    in sixteenths of the scatter of those medians"""
+    in sixteenths of the scatter of those medians; the scatter is in relative flux"""
     flat = T.flatten(t, f)
     keep = T.vet.clean_mask(t, flat)
     k = np.floor((t[keep] - t[0]) * 24).astype(int)
@@ -32,7 +32,7 @@ def slots(t, f):
     x[used] = np.clip(np.rint(med / sigma * SCALE), -127, 127)
     if x.size > S.MAX_SLOTS:
         raise ValueError("more than %d hours: cut the light curve by sector" % S.MAX_SLOTS)
-    return x.astype(np.int8), float(t[0])
+    return x.astype(np.int8), float(t[0]), float(sigma)
 
 
 def compare(hunt):
@@ -44,7 +44,7 @@ def compare(hunt):
         if not r:
             continue
         z = np.load(os.path.join(T.DATA, "lc", name))
-        x, _ = slots(z["t"].astype(float), z["f"].astype(float))
+        x, _, _ = slots(z["t"].astype(float), z["f"].astype(float))
         found = S.search(x)[:, 1] / S.UNIT / 24
         ratio = found[found > 0] / float(r["real_period"])
         first = any(abs(q - 1) < 0.01 for q in ratio)

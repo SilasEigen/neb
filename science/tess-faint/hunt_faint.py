@@ -59,22 +59,31 @@ def fields(n, per, rng):
     return sorted(set(keys))
 
 
+def load(key):
+    """(row, time, flux around 1) of one light curve file; the row says why with `real_fail` when there is no flux"""
+    from astropy.io import fits
+    row = {"gaia": re.search(r"gaiaid-(\d+)", key).group(1), "camccd": key.split("/")[4], "points": 0}
+    h = fits.open(io.BytesIO(get(BUCKET + key)))
+    hd, d = h[0].header, h[1].data
+    row.update(tic=hd.get("TICID", ""), ra=round(float(hd["RA_OBJ"]), 6), dec=round(float(hd["DEC_OBJ"]), 6), tmag=round(float(hd["TESSMAG"]), 3))
+    if row["tmag"] <= FAINT:
+        return row | {"real_fail": "not faint"}, None, None
+    t, f = np.asarray(d["time"], float), np.asarray(d["cal_aper_flux"], float)
+    ok = np.isfinite(t) & np.isfinite(f) & (d["TESS_flags"] == 0) & (d["TGLC_flags"] == 0) & (f > 0)
+    t, f = t[ok], f[ok]
+    row["points"] = len(t)
+    # about 14 days of data: 2,000 points every 10 minutes (sectors 27 and later), 660 every 30 minutes (sectors 1 to 26)
+    if len(t) < (2000 if len(t) < 2 or np.median(np.diff(t)) < 0.0125 else 660):
+        return row | {"real_fail": "too few points"}, None, None
+    return row, t, f / np.median(f)
+
+
 def one(key):
     row = {"gaia": re.search(r"gaiaid-(\d+)", key).group(1), "camccd": key.split("/")[4], "points": 0}
     try:
-        from astropy.io import fits
-        h = fits.open(io.BytesIO(get(BUCKET + key)))
-        hd, d = h[0].header, h[1].data
-        row.update(tic=hd.get("TICID", ""), ra=round(float(hd["RA_OBJ"]), 6), dec=round(float(hd["DEC_OBJ"]), 6), tmag=round(float(hd["TESSMAG"]), 3))
-        if row["tmag"] <= FAINT:
-            return row | {"real_fail": "not faint"}
-        t, f = np.asarray(d["time"], float), np.asarray(d["cal_aper_flux"], float)
-        ok = np.isfinite(t) & np.isfinite(f) & (d["TESS_flags"] == 0) & (d["TGLC_flags"] == 0) & (f > 0)
-        t, f = t[ok], f[ok]
-        row["points"] = len(t)
-        if len(t) < 2000:
-            return row | {"real_fail": "too few points"}
-        f = f / np.median(f)
+        row, t, f = load(key)
+        if t is None:
+            return row
         ws, _, _ = T.load_model()
         for tag, sign in (("real", 1.0), ("inv", -1.0)):
             row.update({tag + "_" + k: v for k, v in T.judge(ws, t, f, sign).items()})

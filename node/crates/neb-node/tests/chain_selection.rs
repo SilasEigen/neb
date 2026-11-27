@@ -237,12 +237,13 @@ fn build_on(
     blocks
 }
 
-/// Waits for the state file of block `height`, which the node writes on a thread of its own.
+/// Waits for the state file of block `height` or of a later one: the node writes it on a thread of its own, with the
+/// state of the moment that thread runs.
 fn wait_state_file(dir: &Path, height: u32) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
         if let Ok(bytes) = fs::read(dir.join("state.dat"))
-            && neb_chain::state::ChainState::snapshot_height(&bytes) == Some(height)
+            && neb_chain::state::ChainState::snapshot_height(&bytes).is_some_and(|h| h >= height)
         {
             return;
         }

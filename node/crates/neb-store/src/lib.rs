@@ -17,12 +17,14 @@
 //! section 6.5). The value is recomputed from the block headers on every read
 //! and must match, so a damaged value cannot change the chain. If the index is
 //! missing or inconsistent, it is rebuilt from the log by following parent
-//! links and choosing the tip with the most cumulative work, never the one
-//! with the most blocks.
+//! links. `open` chooses the tip with the most cumulative work, never the one
+//! with the most blocks. The store knows no chain rule, so a caller that
+//! checks blocks uses `open_unresolved`, reads the tips with `candidate_tips`
+//! and names the chain it accepts with `set_chain`.
 //!
 //! `BlockStore` has no internal locking; callers serialise access.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -132,7 +134,8 @@ fn truncate_to(file: &mut File, offset: u64) -> io::Result<()> {
 pub struct BlockStore {
     dir: PathBuf,
     blocks_file: File,
-    index_file: File,
+    /// `None` until `set_chain` when the index has to be rebuilt.
+    index_file: Option<File>,
     blocks: BTreeMap<[u8; 32], Block>,
     /// Byte offset of each block's record in `blocks.dat`.
     offsets: BTreeMap<[u8; 32], u64>,
@@ -144,10 +147,22 @@ pub struct BlockStore {
 
 impl BlockStore {
     /// Opens or creates the store in `dir`: repairs torn tails and rebuilds
-    /// the index when it is missing or inconsistent. Errors on a damaged
-    /// block record that is not the last one, and on blocks whose parent is
-    /// absent from the log.
+    /// the index when it is missing or inconsistent, on the tip with the most
+    /// cumulative work. Errors on a damaged block record that is not the last
+    /// one, and on blocks whose parent is absent from the log.
     pub fn open(dir: impl AsRef<Path>) -> Result<BlockStore, StoreError> {
+        let mut store = BlockStore::open_unresolved(dir)?;
+        if store.needs_chain() {
+            let (tip, _) = store.candidate_tips()?.into_iter().next().ok_or(StoreError::Corrupt("no tip".into()))?;
+            store.set_chain(&tip)?;
+        }
+        Ok(store)
+    }
+
+    /// As `open`, except that a missing or inconsistent index is left as it
+    /// is: the store has no best chain, `needs_chain` is true, and the caller
+    /// names the chain with `set_chain`, which writes the index.
+    pub fn open_unresolved(dir: impl AsRef<Path>) -> Result<BlockStore, StoreError> {
         let dir = dir.as_ref().to_path_buf();
         fs::create_dir_all(&dir)?;
         let block_path = dir.join("blocks.dat");
@@ -174,16 +189,74 @@ impl BlockStore {
         let index_ok = scan_index(&mut index_file, &blocks, &mut chain, &mut chain_work).unwrap_or(false);
         // An empty index next to a non-empty log (index deleted) also rebuilds.
         let needs_rebuild = !index_ok || chain.is_empty() && !blocks.is_empty();
-        if needs_rebuild {
-            let rebuilt = rebuild_chain(&blocks)?;
-            drop(index_file);
-            write_index(&index_path, &rebuilt)?;
-            index_file = OpenOptions::new().read(true).write(true).open(&index_path)?;
-            chain = rebuilt.iter().map(|(id, _)| *id).collect();
-            chain_work = rebuilt.iter().map(|(_, work)| *work).collect();
-        }
+        let index_file = if needs_rebuild {
+            chain.clear();
+            chain_work.clear();
+            None
+        } else {
+            Some(index_file)
+        };
 
         Ok(BlockStore { dir, blocks_file, index_file, blocks, offsets, chain, chain_work })
+    }
+
+    /// True when the index was missing or inconsistent and no chain was named yet.
+    pub fn needs_chain(&self) -> bool {
+        self.index_file.is_none()
+    }
+
+    /// The tips of the log, the one with the most cumulative work first
+    /// (spec/node.md section 6.5, 9). Ties break on the smaller block id, so
+    /// the order does not depend on the file order. A tip is a block that no
+    /// stored block names as parent; blocks whose ancestry does not reach a
+    /// genesis block are ignored.
+    pub fn candidate_tips(&self) -> Result<Vec<([u8; 32], Work)>, StoreError> {
+        let work = cumulative_work(&self.blocks)?;
+        let parents: BTreeSet<[u8; 32]> = self.blocks.values().map(|b| b.header.parent).collect();
+        let mut tips: Vec<([u8; 32], Work)> = work.into_iter().filter(|(id, _)| !parents.contains(id)).collect();
+        // The ids come in increasing order and the sort is stable: equal work keeps the smaller id first.
+        tips.sort_by_key(|(_, work)| std::cmp::Reverse(*work));
+        Ok(tips)
+    }
+
+    /// The ids of the chain that ends at `tip`, genesis first.
+    pub fn chain_to(&self, tip: &[u8; 32]) -> Result<Vec<[u8; 32]>, StoreError> {
+        let mut chain = Vec::new();
+        let mut cur = *tip;
+        loop {
+            chain.push(cur);
+            let block = self.blocks.get(&cur).ok_or(StoreError::MissingBlock(cur))?;
+            if block.header.parent == [0u8; 32] {
+                break;
+            }
+            cur = block.header.parent;
+            // A hash cycle cannot occur; the bound only stops a corrupt log.
+            if chain.len() > 10_000_000 {
+                return Err(StoreError::Corrupt("parent cycle".into()));
+            }
+        }
+        chain.reverse();
+        Ok(chain)
+    }
+
+    /// Makes the chain that ends at `tip` the best chain and replaces the
+    /// index by one connect event per block of it.
+    pub fn set_chain(&mut self, tip: &[u8; 32]) -> Result<(), StoreError> {
+        let chain = self.chain_to(tip)?;
+        let mut chain_work = Vec::with_capacity(chain.len());
+        let mut work = Work::ZERO;
+        for id in &chain {
+            work = work + block_work(&self.blocks[id])?;
+            chain_work.push(work);
+        }
+        let index_path = self.dir.join("index.dat");
+        // The old file is closed before the new one takes its name.
+        self.index_file = None;
+        write_index(&index_path, &chain, &chain_work)?;
+        self.index_file = Some(OpenOptions::new().read(true).write(true).open(&index_path)?);
+        self.chain = chain;
+        self.chain_work = chain_work;
+        Ok(())
     }
 
     pub fn dir(&self) -> &Path {
@@ -280,15 +353,19 @@ impl BlockStore {
     }
 
     fn append_connect(&mut self, id: &[u8; 32], work: Work) -> Result<(), StoreError> {
-        write_record(&mut self.index_file, INDEX_MAGIC, &connect_payload(id, work))?;
+        write_record(self.index()?, INDEX_MAGIC, &connect_payload(id, work))?;
         Ok(())
+    }
+
+    fn index(&mut self) -> Result<&mut File, StoreError> {
+        self.index_file.as_mut().ok_or(StoreError::Corrupt("the store has no best chain yet".into()))
     }
 
     fn append_disconnect(&mut self, id: &[u8; 32]) -> Result<(), StoreError> {
         let mut payload = [0u8; DISCONNECT_PAYLOAD as usize];
         payload[0] = EVENT_DISCONNECT;
         payload[1..].copy_from_slice(id);
-        write_record(&mut self.index_file, INDEX_MAGIC, &payload)?;
+        write_record(self.index()?, INDEX_MAGIC, &payload)?;
         Ok(())
     }
 }
@@ -447,17 +524,10 @@ fn scan_index(
     }
 }
 
-/// Rebuilds the best chain by following parent links and choosing the tip
-/// with the most cumulative work (spec/node.md section 6.5, 9). Ties break on
-/// the smaller block id, so the result does not depend on the file order.
-/// Blocks whose ancestry does not reach a genesis block are ignored.
-/// Returns the chain, genesis first, with the cumulative work per block.
+/// The cumulative work of every block whose ancestry reaches a genesis block.
 /// Memoised: each block's work is computed once from the nearest known
 /// ancestor, so the pass is linear in the number of blocks.
-fn rebuild_chain(blocks: &BTreeMap<[u8; 32], Block>) -> Result<Vec<([u8; 32], Work)>, StoreError> {
-    if blocks.is_empty() {
-        return Ok(Vec::new());
-    }
+fn cumulative_work(blocks: &BTreeMap<[u8; 32], Block>) -> Result<BTreeMap<[u8; 32], Work>, StoreError> {
     let mut work: BTreeMap<[u8; 32], Work> = BTreeMap::new();
     'blocks: for id in blocks.keys() {
         if work.contains_key(id) {
@@ -492,46 +562,15 @@ fn rebuild_chain(blocks: &BTreeMap<[u8; 32], Block>) -> Result<Vec<([u8; 32], Wo
             work.insert(*p, w);
         }
     }
-    // Tips are the blocks that no other block names as parent.
-    let children: std::collections::BTreeSet<[u8; 32]> =
-        blocks.values().filter(|b| b.header.parent != [0u8; 32]).map(|b| b.header.parent).collect();
-    let mut best: Option<([u8; 32], Work)> = None;
-    for id in blocks.keys() {
-        if children.contains(id) {
-            continue;
-        }
-        let Some(&w) = work.get(id) else { continue };
-        let better = match best {
-            None => true,
-            Some((bid, bw)) => w > bw || (w == bw && *id < bid),
-        };
-        if better {
-            best = Some((*id, w));
-        }
-    }
-    let (mut cur, _) = best.ok_or(StoreError::Corrupt("no tip".into()))?;
-    let mut chain = Vec::new();
-    loop {
-        chain.push((cur, work[&cur]));
-        let block = blocks.get(&cur).ok_or(StoreError::MissingBlock(cur))?;
-        if block.header.parent == [0u8; 32] {
-            break;
-        }
-        cur = block.header.parent;
-        if chain.len() > 10_000_000 {
-            return Err(StoreError::Corrupt("parent cycle".into()));
-        }
-    }
-    chain.reverse();
-    Ok(chain)
+    Ok(work)
 }
 
 /// Replaces the index by one connect event per chain block. Written to a
 /// temporary file and renamed, so a crash leaves the old or the new index.
-fn write_index(path: &Path, chain: &[([u8; 32], Work)]) -> Result<(), StoreError> {
+fn write_index(path: &Path, chain: &[[u8; 32]], chain_work: &[Work]) -> Result<(), StoreError> {
     let tmp = path.with_extension("tmp");
     let mut file = OpenOptions::new().create(true).write(true).truncate(true).open(&tmp)?;
-    for (id, work) in chain {
+    for (id, work) in chain.iter().zip(chain_work) {
         write_record(&mut file, INDEX_MAGIC, &connect_payload(id, *work))?;
     }
     file.sync_all()?;

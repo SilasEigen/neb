@@ -13,7 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock, mpsc};
 
 use neb_chain::Block;
-use neb_chain::state::{ChainParams, ChainState};
+use neb_chain::state::{ChainParams, ChainState, MAX_REORG};
+use neb_store::BlockStore;
 
 use crate::node::{Node, NodeError};
 
@@ -69,6 +70,81 @@ pub(crate) fn open_state(
     connect_from(&mut replayed, chain)?;
     let height = replayed.height();
     Ok((replayed, Start { loaded: None, replayed: height }))
+}
+
+/// The best chain of a store whose index is missing or damaged, with its state; the index is written for it.
+///
+/// The store offers its tips by decreasing work and the rules of the running node decide (spec/node.md section 6.5):
+/// - a chain counts only when every block of it connects, as a replay tells;
+/// - the state file names the last tip this node is known to have been on. The node was on the valid chain with the
+///   most work among those that hold that block, and another chain replaces it only with strictly more work and by
+///   removing at most `MAX_REORG` blocks;
+/// - without a state file that fits a stored chain there is no such tip: the valid chain with the most work.
+pub(crate) fn choose_chain(
+    params: &ChainParams,
+    store: &mut BlockStore,
+    genesis: &Block,
+    dir: &Path,
+    verify_pow: bool,
+) -> Result<(ChainState, Start), NodeError> {
+    let genesis_id = genesis.id();
+    let mut chains = Vec::new();
+    for (tip, work) in store.candidate_tips()? {
+        let ids = store.chain_to(&tip)?;
+        if ids[0] == genesis_id {
+            chains.push((ids, work));
+        }
+    }
+    if chains.is_empty() {
+        return Err(NodeError::Store("the store belongs to a different genesis".into()));
+    }
+    let blocks_of = |ids: &[[u8; 32]]| -> Vec<Block> {
+        ids.iter().map(|id| store.block(id).expect("an id of the log").clone()).collect()
+    };
+    // The height and the id of the block the state file names, when the file fits a stored chain.
+    let file = fs::read(dir.join(STATE_FILE)).ok();
+    let trusted = file.as_deref().and_then(|bytes| {
+        let height = ChainState::snapshot_height(bytes)? as usize;
+        chains.iter().filter(|(ids, _)| ids.len() > height).find_map(|(ids, _)| {
+            ChainState::from_snapshot(params.clone(), blocks_of(&ids[..=height]), bytes).ok()?;
+            Some((height, ids[height]))
+        })
+    });
+    let on_trusted = |ids: &[[u8; 32]]| trusted.is_none_or(|(height, id)| ids.get(height) == Some(&id));
+    let replay = |ids: &[[u8; 32]]| open_state(params, &blocks_of(ids), dir, verify_pow);
+
+    let mut refused = None;
+    let mut chosen = None;
+    for (at, (ids, _)) in chains.iter().enumerate().filter(|(_, (ids, _))| on_trusted(ids)) {
+        match replay(ids) {
+            Ok(opened) => {
+                chosen = Some((at, opened));
+                break;
+            }
+            Err(e) => refused = Some(e),
+        }
+    }
+    // The chains that leave the chain of the state file, or every other chain when none connects on that block.
+    let base = chosen.as_ref().map(|(at, _)| chains[*at].clone());
+    for (at, (ids, work)) in chains.iter().enumerate().filter(|(_, (ids, _))| !on_trusted(ids)) {
+        if let Some((base_ids, base_work)) = &base {
+            let common = ids.iter().zip(base_ids).take_while(|(a, b)| a == b).count();
+            if work <= base_work || base_ids.len() - common > MAX_REORG as usize {
+                continue;
+            }
+        }
+        match replay(ids) {
+            Ok(opened) => {
+                chosen = Some((at, opened));
+                break;
+            }
+            Err(e) => refused = Some(e),
+        }
+    }
+    let (at, opened) = chosen.ok_or_else(|| refused.expect("a chain was replayed"))?;
+    let tip = *chains[at].0.last().expect("a chain has its genesis block");
+    store.set_chain(&tip)?;
+    Ok(opened)
 }
 
 impl Node {

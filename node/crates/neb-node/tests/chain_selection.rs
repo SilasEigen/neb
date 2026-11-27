@@ -217,6 +217,153 @@ fn a_shorter_heavier_branch_replaces_a_taller_lighter_one() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Blocks `from..=to` on the block `parent` of time `parent_time`, on schedule.
+fn build_on(
+    net: &NetworkParams,
+    mut parent: [u8; 32],
+    mut parent_time: u32,
+    heights: std::ops::RangeInclusive<u32>,
+    nonce_base: u32,
+    txs_of: impl Fn(u32) -> neb_chain::Transaction,
+) -> Vec<Block> {
+    let mut blocks = Vec::new();
+    for h in heights {
+        let bits = net.chain.difficulty.next_bits(h - 1, parent_time).expect("difficulty");
+        let block = demo::block(parent, steady_time(h), bits, nonce_base + h, vec![txs_of(h)]);
+        parent = block.id();
+        parent_time = steady_time(h);
+        blocks.push(block);
+    }
+    blocks
+}
+
+/// Waits for the state file of block `height`, which the node writes on a thread of its own.
+fn wait_state_file(dir: &Path, height: u32) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Ok(bytes) = fs::read(dir.join("state.dat"))
+            && neb_chain::state::ChainState::snapshot_height(&bytes) == Some(height)
+        {
+            return;
+        }
+        assert!(std::time::Instant::now() < deadline, "no state file of block {height}");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
+// A branch with more work that leaves the chain more than 60 blocks back stays a side branch while the node runs,
+// and the node opens on the same chain when the index is rebuilt.
+#[test]
+fn a_rebuilt_index_keeps_the_chain_of_the_state_file_against_a_deep_branch() {
+    let dir = temp_dir("deep");
+    let node = open(&dir);
+    let net = test_network();
+
+    let best = build_from_genesis(&net, 70, steady_time, 7000);
+    for block in &best {
+        node.accept_block(block.clone()).expect("connect");
+    }
+    let tip = best.last().unwrap().id();
+    // 66 blocks on block 5: one block more than the chain, and 65 blocks to remove
+    let branch = build_on(&net, best[4].id(), steady_time(5), 6..=71, 8000, coinbase);
+    for block in &branch {
+        let outcome = node.accept_block(block.clone()).expect("accept");
+        assert!(matches!(outcome, BlockOutcome::Side { .. }), "got {outcome:?}");
+    }
+    assert_eq!((node.height(), node.tip_id()), (70, tip));
+    wait_state_file(&dir, 70);
+    drop(node);
+
+    fs::remove_file(dir.join("index.dat")).unwrap();
+    let node = open(&dir);
+    assert_eq!((node.height(), node.tip_id()), (70, tip), "the rebuilt index follows the state file");
+    drop(node);
+    // the index that was written is read as it is
+    let node = open(&dir);
+    assert_eq!((node.height(), node.tip_id()), (70, tip));
+    drop(node);
+
+    // Without the state file nothing tells which chain the node was on: the valid chain with the most work.
+    fs::remove_file(dir.join("index.dat")).unwrap();
+    fs::remove_file(dir.join("state.dat")).unwrap();
+    let node = open(&dir);
+    assert_eq!((node.height(), node.tip_id()), (71, branch.last().unwrap().id()));
+    drop(node);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+// A branch with more work and a block whose coinbase pays too much is refused while the node runs; its blocks stay
+// in the log, and the node opens on its chain when the index is rebuilt, with the state file or without it.
+#[test]
+fn a_rebuilt_index_leaves_aside_a_branch_that_does_not_connect() {
+    let dir = temp_dir("invalid");
+    let node = open(&dir);
+    let net = test_network();
+
+    let best = build_from_genesis(&net, 20, steady_time, 7000);
+    for block in &best {
+        node.accept_block(block.clone()).expect("connect");
+    }
+    let tip = best.last().unwrap().id();
+    let branch = build_on(&net, best[14].id(), steady_time(15), 16..=22, 8000, |h| {
+        if h == 17 { demo::coinbase(h, demo::MINER_LOCK, demo::PROJECT_LOCK, 2 * subsidy(h)) } else { coinbase(h) }
+    });
+    for block in &branch[..5] {
+        let outcome = node.accept_block(block.clone()).expect("accept");
+        assert!(matches!(outcome, BlockOutcome::Side { .. }), "got {outcome:?}");
+    }
+    for block in &branch[5..] {
+        let refused = node.accept_block(block.clone());
+        assert!(matches!(refused, Err(neb_node::NodeError::Reorg(_))), "got {refused:?}");
+    }
+    assert_eq!((node.height(), node.tip_id()), (20, tip));
+    wait_state_file(&dir, 20);
+    drop(node);
+
+    fs::remove_file(dir.join("index.dat")).unwrap();
+    let node = open(&dir);
+    assert_eq!((node.height(), node.tip_id()), (20, tip));
+    drop(node);
+
+    fs::remove_file(dir.join("index.dat")).unwrap();
+    fs::remove_file(dir.join("state.dat")).unwrap();
+    let node = open(&dir);
+    assert_eq!((node.height(), node.tip_id()), (20, tip));
+    drop(node);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+// The state file is older than a reorganisation the node made: the rebuilt index takes the chain the node moved to,
+// which has more work and leaves the chain of the file within the limit.
+#[test]
+fn a_rebuilt_index_follows_a_reorganisation_made_after_the_state_file() {
+    let dir = temp_dir("stale");
+    let node = open(&dir);
+    let net = test_network();
+
+    let first = build_from_genesis(&net, 20, steady_time, 7000);
+    for block in &first {
+        node.accept_block(block.clone()).expect("connect");
+    }
+    wait_state_file(&dir, 20);
+    let at_20 = fs::read(dir.join("state.dat")).unwrap();
+    let branch = build_on(&net, first[14].id(), steady_time(15), 16..=22, 8000, coinbase);
+    for block in &branch {
+        node.accept_block(block.clone()).expect("accept");
+    }
+    let tip = branch.last().unwrap().id();
+    assert_eq!((node.height(), node.tip_id()), (22, tip));
+    wait_state_file(&dir, 21);
+    drop(node);
+
+    fs::write(dir.join("state.dat"), &at_20).unwrap();
+    fs::remove_file(dir.join("index.dat")).unwrap();
+    let node = open(&dir);
+    assert_eq!((node.height(), node.tip_id()), (22, tip));
+    drop(node);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
 // A stored block whose parent is not stored makes `Node::open` fail with `NodeError::Store`.
 #[test]
 fn open_refuses_a_store_with_a_block_without_parent() {

@@ -260,6 +260,56 @@ fn rebuild_chooses_the_heaviest_tip_not_the_tallest() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
+// A caller that checks blocks opens the store without a choice: a sound index is read as before, a missing one is
+// not written, the tips come by decreasing work, and the index is written for the chain the caller names.
+#[test]
+fn an_unresolved_store_waits_for_the_chain_of_its_caller() {
+    let dir = temp_dir("unresolved");
+    let index = dir.join("index.dat");
+    let blocks = chain(5);
+    // a side branch on block 2 that is two blocks taller, with more work
+    let mut side = Vec::new();
+    let mut parent = blocks[2].id();
+    for i in 3..=7u32 {
+        let coinbase = demo::coinbase(i, demo::MINER_LOCK, demo::PROJECT_LOCK, 19 * 100_000_000);
+        let block = demo::block(parent, 1_800_000_000 + 60 * i, 0xC280_0000, 500 + i, vec![coinbase]);
+        parent = block.id();
+        side.push(block);
+    }
+    {
+        let mut store = BlockStore::open(&dir).unwrap();
+        for block in &blocks {
+            store.connect(block).unwrap();
+        }
+        for block in &side {
+            store.put_block(block).unwrap();
+        }
+    }
+    let written = fs::read(&index).unwrap();
+    let store = BlockStore::open_unresolved(&dir).unwrap();
+    assert!(!store.needs_chain());
+    assert_eq!(store.chain_blocks().unwrap(), blocks);
+    drop(store);
+    assert_eq!(fs::read(&index).unwrap(), written);
+
+    fs::remove_file(&index).unwrap();
+    let mut store = BlockStore::open_unresolved(&dir).unwrap();
+    assert!(store.needs_chain());
+    assert!(store.chain_ids().is_empty());
+    assert!(fs::read(&index).unwrap().is_empty(), "no chain is written before the caller names one");
+    let tips = store.candidate_tips().unwrap();
+    assert_eq!(tips.iter().map(|(id, _)| *id).collect::<Vec<_>>(), [side[4].id(), blocks[5].id()]);
+    assert!(tips[0].1 > tips[1].1);
+    assert!(store.connect(&blocks[0]).is_err(), "no event before the chain is named");
+    store.set_chain(&blocks[5].id()).unwrap();
+    assert!(!store.needs_chain());
+    assert_eq!(store.chain_blocks().unwrap(), blocks);
+    drop(store);
+    assert_eq!(fs::read(&index).unwrap(), written);
+    assert_eq!(BlockStore::open(&dir).unwrap().chain_blocks().unwrap(), blocks);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
 // A block whose parent is not stored is ignored when the index is rebuilt.
 #[test]
 fn rebuild_ignores_a_branch_without_a_genesis_block() {

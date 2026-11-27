@@ -186,17 +186,22 @@ impl Node {
     /// another genesis, a stored block does not connect, or a stored block has no parent in the store
     /// (`NodeError::Store`).
     pub fn open(config: NodeConfig) -> Result<Node, NodeError> {
-        let mut store = BlockStore::open(&config.data_dir)?;
+        let mut store = BlockStore::open_unresolved(&config.data_dir)?;
         let genesis = config.network.genesis.clone();
-        if store.chain_blocks()?.is_empty() {
-            store.connect(&genesis)?;
-        }
-        let chain = store.chain_blocks()?;
-        if chain.first().map(|b| b.id()) != Some(genesis.id()) {
-            return Err(NodeError::Store("the store belongs to a different genesis".into()));
-        }
-        let (state, start) =
-            crate::startup::open_state(&config.network.chain, &chain, &config.data_dir, config.verify_pow)?;
+        let (params, dir) = (&config.network.chain, &config.data_dir);
+        let (state, start) = if store.needs_chain() {
+            // The index is rebuilt on a chain that this node checks, not on the work of the headers alone.
+            crate::startup::choose_chain(params, &mut store, &genesis, dir, config.verify_pow)?
+        } else {
+            if store.chain_blocks()?.is_empty() {
+                store.connect(&genesis)?;
+            }
+            let chain = store.chain_blocks()?;
+            if chain.first().map(|b| b.id()) != Some(genesis.id()) {
+                return Err(NodeError::Store("the store belongs to a different genesis".into()));
+            }
+            crate::startup::open_state(params, &chain, dir, config.verify_pow)?
+        };
         if start.replayed > 0 {
             crate::startup::write_state(&config.data_dir, &state.snapshot());
         }

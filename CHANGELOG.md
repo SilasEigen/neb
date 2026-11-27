@@ -6,9 +6,18 @@ the software version: a node checks them, not the software version.
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-11-27
+
+Same protocol, network, genesis and dataset file as 1.0.9, and the nodes and miners of 1.0.2 to 1.0.10 work together.
+No consensus rule changes: what follows is how a node checks a block it receives and how it rebuilds its index.
+Node and pool operators should upgrade.
+
 - Node: the proof and the shares of a block are checked once, where each peer session that received the block
   checked them at the same time. A relay with many peers no longer fills its processors for seconds on a block
   that lists many shares.
+- Node: when `index.dat` is missing or damaged, the index is rebuilt on a chain that the node replays, with the
+  rules of chain selection it applies while it runs: the block that the state file names and the limit of 60
+  blocks. The store took the tip with the most work among the stored headers. A sound index is read as before.
 
 ## [1.0.9] - 2026-11-25
 

@@ -51,7 +51,7 @@ In simulation of the protocol, the Kepler model reaches 88.8% on stars it never 
 
 ## Status
 
-Version 1.0.9 runs the main network: protocol 3, two models from the first block, parameters in [docs/mainnet.md](docs/mainnet.md). Its genesis block pays each lock a tenth of the balance it held on each of the two test networks, on the same wallet file ([docs/carry-over.md](docs/carry-over.md)). By default a node dials the public relays of the network (port 3440) and then learns other addresses from its peers; `--no-seeds` keeps it alone, and `--connect` and `--seed` choose other peers.
+Version 1.0.10 runs the main network: protocol 3, two models from the first block, parameters in [docs/mainnet.md](docs/mainnet.md). Its genesis block pays each lock a tenth of the balance it held on each of the two test networks, on the same wallet file ([docs/carry-over.md](docs/carry-over.md)). By default a node dials the public relays of the network (port 3440) and then learns other addresses from its peers; `--no-seeds` keeps it alone, and `--connect` and `--seed` choose other peers.
 
 The test network of protocol 3 stays in the software for trials of upgrades: `neb-node --run --testnet`, with the dataset file of release 0.3.1 ([docs/testnet.md](docs/testnet.md)). Its coins have no value.
 
@@ -62,7 +62,7 @@ The test network of protocol 3 stays in the software for trials of upgrades: `ne
 Download from the release page the archive for your system, `neb-datasets.bin` (the two datasets, 16 MB, pinned by hash) and `SHA256SUMS`, and check them as described in "Releases". On Windows, in PowerShell:
 
 ```powershell
-Expand-Archive neb-1.0.9-windows-x86_64.zip neb; Move-Item neb-datasets.bin neb; cd neb
+Expand-Archive neb-1.0.10-windows-x86_64.zip neb; Move-Item neb-datasets.bin neb; cd neb
 .\neb-wallet.exe --wallet wallet.txt new         # asks for a password, prints your address; keep a copy of wallet.txt and of the password
 $lock = .\neb-wallet.exe --wallet wallet.txt lock
 .\neb-node.exe --run --dataset neb-datasets.bin --datadir data --miner-lock $lock
@@ -78,7 +78,7 @@ In a second window:
 On Linux:
 
 ```bash
-mkdir neb && tar -xzf neb-1.0.9-linux-x86_64.tar.gz -C neb && mv neb-datasets.bin neb && cd neb
+mkdir neb && tar -xzf neb-1.0.10-linux-x86_64.tar.gz -C neb && mv neb-datasets.bin neb && cd neb
 ./neb-wallet --wallet wallet.txt new
 ./neb-node --run --dataset neb-datasets.bin --datadir data --miner-lock "$(./neb-wallet --wallet wallet.txt lock)" &
 ./neb-miner-cpu --node 127.0.0.1:3441 --dataset neb-datasets.bin    # or neb-miner-gpu
@@ -137,7 +137,7 @@ sha256sum -c SHA256SUMS
 On Windows, in PowerShell, compare these hashes with the lines of `SHA256SUMS` (Gpg4win verifies the signature):
 
 ```powershell
-Get-FileHash -Algorithm SHA256 neb-1.0.9-windows-x86_64.zip, neb-datasets.bin
+Get-FileHash -Algorithm SHA256 neb-1.0.10-windows-x86_64.zip, neb-datasets.bin
 ```
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md).

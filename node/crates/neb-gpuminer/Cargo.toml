@@ -23,6 +23,7 @@ neb-block = { path = "../neb-block" }
 neb-cpuminer = { path = "../neb-cpuminer" }
 neb-engines = { path = "../neb-engines" }
 neb-pow = { path = "../neb-pow" }
+neb-sky = { path = "../neb-sky" }
 blake3 = "1"
 
 [build-dependencies]

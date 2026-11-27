@@ -26,6 +26,8 @@ pub const NO_DATA: i8 = -128;
 /// Bytes of one entry in a result file.
 pub const ENTRY_BYTES: usize = 16;
 
+pub mod client;
+
 const VERSION: u16 = 1;
 
 /// One box: its score, its period in time units, its first phase bin and the index of its width.
@@ -184,21 +186,38 @@ pub fn read_batch(raw: &[u8]) -> Result<Vec<&[u8]>, BatchError> {
 /// # Errors
 /// When the batch file is refused.
 pub fn run(raw: &[u8]) -> Result<Vec<u8>, BatchError> {
+    run_threads(raw, 1)
+}
+
+/// The result file of a batch file, the light curves shared between `threads` threads.
+///
+/// # Errors
+/// When the batch file is refused.
+pub fn run_threads(raw: &[u8], threads: usize) -> Result<Vec<u8>, BatchError> {
     let curves = read_batch(raw)?;
+    let mut found = vec![[Entry::default(); KEEP]; curves.len()];
+    let per = curves.len().div_ceil(threads.max(1)).max(1);
+    std::thread::scope(|scope| {
+        for (some, out) in curves.chunks(per).zip(found.chunks_mut(per)) {
+            scope.spawn(move || {
+                for (c, o) in some.iter().zip(out) {
+                    let x: Vec<i8> = c.iter().map(|&b| b as i8).collect();
+                    *o = search(&x);
+                }
+            });
+        }
+    });
     let mut out = Vec::with_capacity(44 + curves.len() * KEEP * ENTRY_BYTES);
     out.extend_from_slice(b"NEBR");
     out.extend_from_slice(&VERSION.to_le_bytes());
     out.extend_from_slice(&[0, 0]);
     out.extend_from_slice(blake3::hash(raw).as_bytes());
     out.extend_from_slice(&(curves.len() as u32).to_le_bytes());
-    for c in curves {
-        let x: Vec<i8> = c.iter().map(|&b| b as i8).collect();
-        for e in search(&x) {
-            out.extend_from_slice(&e.score.to_le_bytes());
-            out.extend_from_slice(&e.period.to_le_bytes());
-            out.extend_from_slice(&e.start.to_le_bytes());
-            out.extend_from_slice(&[e.width, 0]);
-        }
+    for e in found.iter().flatten() {
+        out.extend_from_slice(&e.score.to_le_bytes());
+        out.extend_from_slice(&e.period.to_le_bytes());
+        out.extend_from_slice(&e.start.to_le_bytes());
+        out.extend_from_slice(&[e.width, 0]);
     }
     Ok(out)
 }

@@ -1,4 +1,4 @@
-//! `neb-miner-gpu --node HOST:PORT (--dataset FILE | --synthetic) [--devices LIST] [--gpu-kernel k0|k1|k2|table] [--plain] [--stats FILE]`
+//! `neb-miner-gpu --node HOST:PORT (--dataset FILE | --synthetic) [--devices LIST] [--gpu-kernel k0|k1|k2|table] [--plain] [--stats FILE] [--sky URL]`
 //! and `neb-miner-gpu --selftest [--gpu-kernel k0|k1|k2|table] [--dataset FILE | --synthetic]`
 //!
 //! GPU miner of the work service (spec/node.md section 7.1). `--devices` is a comma-separated list of CUDA device
@@ -15,11 +15,14 @@
 //! sample of the dataset once for each model and a device builds an attempt from 16 rows of that table; a device that
 //! fails its self-test or disagrees with the reference runs the default kernel of these networks. `--selftest` runs the self-test of the requested kernel on each device
 //! (default: K0, K1 and K2, skipping the ones a device does not support) on the given dataset (default: the synthetic one).
+//! `--sky URL` also runs the sky search (spec/sky-search.md) with batches of the server at `URL` (`http://host:port`).
+//! In this version the search runs on processor threads, one or `--sky-threads N`, and the server is told the model of
+//! the first card; `--sky-address ADDRESS` gives it a NEB address. It is off unless asked for.
 //! Exit code: 0 for a passed self test or after `q`, 1 when a device fails, the node closes the connection or
 //! cannot be reached, 2 on a usage error.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use neb_cpuminer::dashboard::{self, Hardware, Info, Outcome};
@@ -41,6 +44,7 @@ fn usage() -> i32 {
     eprintln!(
         "usage: neb-miner-gpu --node HOST:PORT (--dataset FILE | --synthetic) [--devices 0,1,...] [--gpu-kernel k0|k1|k2|table] [--plain] [--stats FILE]"
     );
+    eprintln!("       [--sky http://HOST:PORT [--sky-threads N] [--sky-address ADDRESS]]");
     eprintln!(
         "       neb-miner-gpu --selftest [--gpu-kernel k0|k1|k2|table] [--dataset FILE | --synthetic] [--devices 0,1,...]"
     );
@@ -160,6 +164,7 @@ fn run(args: &[String]) -> i32 {
         (None, None, false, None, false, false);
     let mut stats_path: Option<String> = None;
     let mut requested: Option<GpuKernel> = None;
+    let mut sky = neb_sky::client::Options::default();
     let mut i = 0;
     while i < args.len() {
         match (args[i].as_str(), args.get(i + 1)) {
@@ -174,6 +179,11 @@ fn run(args: &[String]) -> i32 {
                     return usage();
                 }
             },
+            (flag, Some(v)) if flag.starts_with("--sky") => {
+                if !sky.take(flag, v) {
+                    return usage();
+                }
+            }
             ("--synthetic", _) => {
                 synthetic = true;
                 i += 1;
@@ -287,6 +297,16 @@ fn run(args: &[String]) -> i32 {
         .zip(&kernels)
         .map(|(&d, k)| format!("{d}: {} [{}]", cuda::device_name(d).unwrap_or_default(), k.name()))
         .collect();
+    // the search runs on processor threads in this version; the server is told the model of the first card
+    let card = cuda::device_name(devices[0]).unwrap_or_default();
+    let software = concat!("neb-miner-gpu ", env!("CARGO_PKG_VERSION"));
+    let sky = match sky.start(software, &card, Arc::new(AtomicBool::new(false))) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
     let readings = telemetry::start(&devices, names.clone());
     let _stats_thread = stats_path.map(|path| {
         let bus_numbers = devices.iter().map(|&d| cuda::device_bus(d).unwrap_or(0)).collect();
@@ -320,6 +340,9 @@ fn run(args: &[String]) -> i32 {
             stats.accepted.load(Ordering::Relaxed),
             stats.rejected.load(Ordering::Relaxed),
         );
+        if let Some(sky) = &sky {
+            println!("        {}", neb_sky::client::status(sky));
+        }
         let bad = mismatches.load(Ordering::Relaxed);
         if bad > 0 {
             eprintln!("warning: {bad} nonces of the device were refused by the CPU check");

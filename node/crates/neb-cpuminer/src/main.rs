@@ -1,4 +1,4 @@
-//! `neb-miner-cpu --node HOST:PORT (--dataset FILE | --synthetic) [--threads N] [--engine NAME] [--plain]` and
+//! `neb-miner-cpu --node HOST:PORT (--dataset FILE | --synthetic) [--threads N] [--engine NAME] [--plain] [--sky URL]` and
 //! `neb-miner-cpu (--dataset FILE | --synthetic) --engine NAME --selftest`
 //!
 //! Command line of the CPU miner of the work service (spec/node.md section
@@ -13,11 +13,15 @@
 //! first and is used only if it passes and the machine can run it; otherwise the miner says why and uses the reference. The
 //! reference re-evaluates every share and solution of an optimised engine before it is reported. `--selftest` runs
 //! that self-test and exits: 0 when the requested engine passed, 1 when it did not.
+//!
+//! `--sky URL` also runs the sky search (spec/sky-search.md) with batches of the server at `URL`
+//! (`http://host:port`), on one more thread or on `--sky-threads N`; `--sky-address ADDRESS` gives the server a NEB
+//! address. It is off unless asked for, and mining goes on when the server is away.
 //! Exit code: 0 after `q`, 1 when the node closes the connection or cannot be
 //! reached, 2 on a usage error.
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use neb_cpuminer::dashboard::{self, Hardware, Info, Outcome};
@@ -28,6 +32,7 @@ fn usage() -> i32 {
     eprintln!(
         "usage: neb-miner-cpu --node HOST:PORT (--dataset FILE | --synthetic) [--threads N] [--engine ref|table|avx512|avx512-sparse|avx512-dense] [--plain]"
     );
+    eprintln!("       [--sky http://HOST:PORT [--sky-threads N] [--sky-address ADDRESS]]");
     eprintln!("       neb-miner-cpu (--dataset FILE | --synthetic) --engine NAME --selftest");
     2
 }
@@ -40,6 +45,7 @@ fn main() {
 fn run(args: &[String]) -> i32 {
     let (mut node, mut dataset_path, mut synthetic, mut plain, mut selftest) = (None, None, false, false, false);
     let mut engine_kind = EngineKind::Reference;
+    let mut sky = neb_sky::client::Options::default();
     let mut threads = std::thread::available_parallelism().map_or(1, |n| n.get());
     let mut i = 0;
     while i < args.len() {
@@ -58,6 +64,11 @@ fn run(args: &[String]) -> i32 {
                     return usage();
                 }
             },
+            (flag, Some(v)) if flag.starts_with("--sky") => {
+                if !sky.take(flag, v) {
+                    return usage();
+                }
+            }
             ("--selftest", _) => {
                 selftest = true;
                 i += 1;
@@ -120,6 +131,14 @@ fn run(args: &[String]) -> i32 {
             return 1;
         }
     };
+    let software = concat!("neb-miner-cpu ", env!("CARGO_PKG_VERSION"));
+    let sky = match sky.start(software, std::env::consts::ARCH, Arc::new(AtomicBool::new(false))) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("{e}");
+            return 2;
+        }
+    };
     if !plain && dashboard::available() {
         let info = Info {
             title: "CPU proof-of-work miner".into(),
@@ -151,6 +170,9 @@ fn run(args: &[String]) -> i32 {
             stats.accepted.load(Ordering::Relaxed),
             stats.rejected.load(Ordering::Relaxed),
         );
+        if let Some(sky) = &sky {
+            println!("        {}", neb_sky::client::status(sky));
+        }
         let e = engine.stats();
         if e.disabled || e.mismatches > 0 {
             println!(

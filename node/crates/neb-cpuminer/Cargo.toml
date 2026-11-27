@@ -13,6 +13,7 @@ path = "src/main.rs"
 neb-block = { path = "../neb-block" }
 neb-engines = { path = "../neb-engines" }
 neb-pow = { path = "../neb-pow" }
+neb-sky = { path = "../neb-sky" }
 neb-work = { path = "../neb-work" }
 blake3 = "1"
 

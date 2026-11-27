@@ -310,6 +310,7 @@ dependencies = [
  "neb-engines",
  "neb-node",
  "neb-pow",
+ "neb-sky",
  "neb-work",
 ]
 
@@ -343,6 +344,7 @@ dependencies = [
  "neb-engines",
  "neb-node",
  "neb-pow",
+ "neb-sky",
 ]
 
 [[package]]

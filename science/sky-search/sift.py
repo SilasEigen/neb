@@ -117,12 +117,15 @@ def detect_new(con):
         body = con.execute("select raw from result where batch = ? and hash = ? limit 1", (batch, answer)).fetchone()[0]
         curves, rows = S.read_batch(raw), S.read_result(body)[1]
         stars = con.execute("select idx, gaia, flipped, sector, start, scale from curve where batch = ?", (batch,)).fetchall()
+        found = []  # computed first, written in one short transaction: the server must not wait on this to take a result
         for idx, gaia, flipped, sector, start, scale in stars:
             d = detect(curves[idx], rows[idx], scale) or {"period": 0, "t0": 0, "dur_h": 0, "n": 0, "depth_ppm": 0, "mes": 0, "detected": 0}
-            con.execute("insert or replace into signal values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '{}', ?)",
-                        (batch, idx, gaia, sector, flipped, d["period"], start + d["t0"], d["dur_h"], d["n"], d["depth_ppm"] or 0, d["mes"] or 0,
-                         d["detected"], time.time()))
-        con.execute("update batch set sifted = 1 where hash = ?", (batch,))
+            found.append((batch, idx, gaia, sector, flipped, d["period"], start + d["t0"], d["dur_h"], d["n"], d["depth_ppm"] or 0, d["mes"] or 0,
+                          d["detected"], time.time()))
+        # the batch may have been reopened while the tests ran: then nothing is written
+        if con.execute("select 1 from batch where hash = ? and state = 'agreed' and answer = ?", (batch, answer)).fetchone():
+            con.executemany("insert or replace into signal values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', '{}', ?)", found)
+            con.execute("update batch set sifted = 1 where hash = ?", (batch,))
         con.commit()
         print("batch %s sifted" % batch[:12], flush=True)
 

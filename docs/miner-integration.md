@@ -80,12 +80,22 @@ The reference miners talk to a node, solo, and the job pays the lock that the no
 
 A share on NEB is bound to the parent block, not to the header (`spec/shares.md` section 11.2): a miner can change job, extranonce or time at any moment without losing the shares it found, and the shares of every miner train the model, whoever finds the block.
 
+## The sky search
+
+A miner can run a second job next to the proof of work: a search for repeating dips in the light curves of faint
+stars. It changes nothing in the consensus rules, and a miner that skips it loses nothing. `spec/sky-search.md`
+defines the job, the batch and result formats, and the transport. Every step is integer arithmetic, so every
+implementation returns the same bytes for the same batch, and `vectors/sky-search.txt` holds light curves with the
+entries to expect. The references are the Rust crate `neb-sky` and `science/sky-search/sky_ref.py`. The `neb-sky`
+program runs the job next to any miner.
+
 ## Links
 
 - Code: https://github.com/SilasEigen/neb
 - Specification: https://github.com/SilasEigen/neb/blob/main/spec/shares.md
 - Convolutional networks: https://github.com/SilasEigen/neb/blob/main/spec/nebhash-v2.md
 - Pool protocol: https://github.com/SilasEigen/neb/blob/main/spec/pool.md
+- Sky search: https://github.com/SilasEigen/neb/blob/main/spec/sky-search.md
 - Main network: https://github.com/SilasEigen/neb/blob/main/docs/mainnet.md
 - Running a node and a miner: https://github.com/SilasEigen/neb/blob/main/docs/testnet.md
 - Explorer: https://neuralenginebyte.org/#/explorer

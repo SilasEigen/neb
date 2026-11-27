@@ -10,8 +10,8 @@ The job is defined in integers only, so every implementation, on any processor o
 the same batch. A server can then compare the results of two miners that do not know each other.
 
 Sections 3 to 8 (the light curve, the computation, the two file formats) are implemented by a Python reference
-and a Rust crate that agree on the shared vectors (section 11). Section 10, the transport, is not final: the batch
-server is not public yet.
+and a Rust crate that agree on the shared vectors (section 11). Section 10, the transport, is not final: no batch
+server is public yet.
 
 ## 2. Roles
 
@@ -148,27 +148,68 @@ The file is `44 + 512 * count` bytes. Two correct implementations return the sam
 
 ## 9. How the server checks results
 
-- Each batch goes to at least two miners that the server picks. Their result files must match.
-- The server can check any single entry in one pass over the light curve (`slow_score` in the reference), without
-  running the search.
-- Some light curves of a batch have an answer the server already knows. A miner cannot tell them from the others.
+- For a few light curves of each batch, the server computes the entries itself before the batch leaves. A result
+  that differs on one of them is refused. A miner cannot tell those light curves from the others.
+- The server checks a few entries of each result one by one, in one pass over the light curve each (`slow_score`
+  in the reference).
+- Each batch goes to at least two miners. When two of them return the same file, the batch is agreed. When two
+  files differ, the server runs the search itself and drops the wrong one.
 
-A result that fails one of these checks is dropped, and the batch goes out again.
+Some light curves of a batch are real ones with the flux flipped. They measure what noise alone gives, and a
+miner cannot tell them apart either.
+
+Once a batch is agreed, the server runs the detection tests of `science/tess-faint` on the slots of each light
+curve. The pixel test needs about 10 MB of images for each signal, so the server queues the strong signals and
+runs it for the strongest first, at a pace the operator sets (`science/sky-search/sift.py`).
 
 ## 10. Transport (not final)
 
-This version does not specify the transport. The plan is plain HTTPS: one request returns a batch file, one request
-posts the result file. The post will carry three optional text fields: the name and version of the mining software,
-the model of the card or processor, and a NEB address. None of them changes the result file.
+`science/sky-search/batch_server.py` is the batch server. These paths may still change.
 
-This protocol does not interrupt mining: the software decides when to run a batch, and the server never
-talks to a pool.
+| Request | Reply |
+|---|---|
+| `GET /sky/v1/batch` | 200 and a batch file, or 204 when there is no batch for this miner |
+| `POST /sky/v1/result`, the result file as the body | 200 when the result is taken |
+| `GET /sky/v1/status` | 200 and the counters of the server, in JSON |
+| `GET /sky/v1/signals` | 200 and the counts of each step with the signals the pixel test decided, in JSON |
+
+A refused request gets one of these codes:
+
+| Code | Meaning |
+|---|---|
+| 404 | unknown path, or a result for a batch the server does not have |
+| 409 | the batch was settled while the miner searched it; nothing is counted against the miner |
+| 413 | a body that is not the size of a result file |
+| 422 | a result that fails a check of section 9; the body says which |
+| 429 | more than 30 requests in a minute from one network address |
+| 403 | five refused results in a day |
+
+Both miner requests take three optional text fields in the query string, 64 characters at most each: `software`
+(the name and version of the mining software), `device` (the model of the card or processor) and `address` (a NEB
+address). None of them changes the result file. The server tells miners apart by the address, or by the network
+address when none is given, and never hands the same batch twice to one miner.
+
+Miners speak plain HTTP, as they speak plain TCP to a pool: nothing secret travels, and the server checks every
+result. The server can also speak HTTPS (`--cert`, `--key`) or sit behind a proxy (`--behind-proxy`).
+
+This protocol does not interrupt mining: the software decides when to run a batch, and the server never talks to
+a pool.
 
 ## 11. Reference and vectors
 
 - `science/sky-search/sky_ref.py`: the Python reference. `python sky_ref.py BATCH RESULT` writes the result file
   of a batch file, `python sky_ref.py --check` runs its self-check.
-- `node/crates/neb-sky`: the same job in Rust, written the plain way, one period after the other.
+- `node/crates/neb-sky`: the same job in Rust, written the plain way, one period after the other, and the miner
+  side of the transport (`client`). Its example `run` writes the result file of a batch file.
+- `neb-sky`, the program of that crate, runs the search next to any miner and does not mine.
+  `neb-sky --sky http://HOST:PORT` takes batches until it is stopped. `--sky-threads N` sets the search threads,
+  `--sky-address ADDRESS` gives the server a NEB address, `--sky-device TEXT` names the cards or the processor, and
+  `--once` stops when the server has no batch left.
+- `neb-miner-cpu` and `neb-miner-gpu` take the same `--sky` options and run the search inside the miner. The search
+  stays off until you pass `--sky`. In both miners it runs on processor threads in this version.
+- `science/sky-search/batch_server.py`, `sift.py` and `sky_client.py`: the server, what it does with the entries,
+  and a miner as small as it gets. `sky_client.py --engine COMMAND` runs any implementation of the job against a
+  server. `science/sky-search/README.md` says how to run them.
 - `vectors/sky-search.txt`: 11 light curves. The first four are real ones, TESS light curves of faint stars with
   an eclipse. The others are edge cases: noise with gaps, an empty light curve, five slots, no data at all, a
   constant, the largest values the format allows, and a dip every 24 hours that makes ties.

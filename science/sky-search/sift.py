@@ -170,8 +170,38 @@ def run(con, every=60.0):
     pixels(con, every)
 
 
-def feed(con):
-    """what the page of the site shows: the counts of each step and the signals the pixel test decided, newest first"""
+DAY = 86400.0
+
+
+def activity(con, now=None, days=14):
+    """when miners searched, for the page of the site: the time of the last search, the miners of the last 24 hours and of
+    the last 7 days, and for each of the last `days` UTC days the miners that sent a result and the stars of the batches
+    agreed that day (the day of the last result of the batch, so the days add up to the stars searched). It carries no
+    miner address."""
+    now = time.time() if now is None else float(now)
+    start = now - now % DAY - (days - 1) * DAY
+    rows = con.execute("select at, miner from result where miner != 'server' and at >= ?", (start,)).fetchall()
+    agreed = con.execute("""select max(r.at), (select count(*) from curve c where c.batch = r.batch and c.flipped = 0)
+                            from result r join batch b on b.hash = r.batch where r.miner != 'server' and b.state = 'agreed'
+                            group by r.batch having max(r.at) >= ?""", (start,)).fetchall()
+    out = [{"day": time.strftime("%Y-%m-%d", time.gmtime(start + i * DAY)), "stars": 0, "who": set()} for i in range(days)]
+    for at, miner in rows:
+        i = int((at - start) // DAY)
+        if 0 <= i < days:
+            out[i]["who"].add(miner)
+    for at, stars in agreed:
+        i = int((at - start) // DAY)
+        if 0 <= i < days:
+            out[i]["stars"] += stars
+    since = lambda seconds: len({m for at, m in rows if at >= now - seconds})  # noqa: E731
+    last = con.execute("select coalesce(max(at), 0) from result where miner != 'server'").fetchone()[0]
+    return {"now": now, "last": last, "miners24": since(DAY), "miners7": since(7 * DAY),
+            "days": [{"day": d["day"], "stars": d["stars"], "miners": len(d["who"])} for d in out]}
+
+
+def feed(con, now=None):
+    """what the page of the site shows: the counts of each step, the signals the pixel test decided, newest first, and when
+    miners searched"""
     one = lambda q: con.execute(q).fetchone()[0]  # noqa: E731
     away = "abs(period - 1.0) > %s" % ONE_DAY
     verdicts = dict(con.execute("select verdict, count(*) from signal where verdict != '' group by verdict").fetchall())
@@ -195,7 +225,7 @@ def feed(con):
                         "depth_ppm": depth, "n": n, "snr": d.get("snr_peak", 0), "offset": d.get("offset_arcsec", 0), "verdict": verdict,
                         "status": "off" if verdict == "off target" else "cataloged" if names else "unchecked", "note": ", ".join(names),
                         "source": d.get("source", ""), "sourceSep": d.get("source_sep"), "curve": d.get("curve"), "clamped": d.get("clamped", False), "at": at})
-    return {"summary": summary, "signals": signals}
+    return {"summary": summary, "signals": signals, "activity": activity(con, now)}
 
 
 def compare(hunt, count, engine=""):
@@ -288,7 +318,27 @@ def check():
     assert json.loads(got["0"][1])["catalogs"] == ["stub"] and json.loads(got["0"][1])["curve"]["bins"] is not None
     assert all(con.execute("select verdict from signal where gaia = ?", (g,)).fetchone() == ("",) for g in "345")
     assert pixels(con, 0.0) == 0 and len(asked) == 5
-    print("ok: queue order, retries and skips")
+    # when miners searched: results at known times, a result of the server itself and one older than the window left out
+    now = 1_800_000_000.0  # 08:00 UTC
+    assert activity(con, now)["last"] == 0 and sum(d["stars"] + d["miners"] for d in activity(con, now)["days"]) == 0
+    B.cut(con, [({"gaia": str(10 + i), "tic": str(200 + i), "ra": 20.0 + i, "dec": 5.0, "tmag": 14.0}, rng.integers(-40, 41, 300).astype(np.int8), 0.0, 0, 40, 0.001)
+                for i in range(3)], rng)
+    other = con.execute("select hash from batch where hash != ?", (batch,)).fetchone()[0]
+    # two miners on the first batch today, two on the second batch yesterday, then results of batches of nothing
+    for k, (miner, at, on) in enumerate((("a", now - 3600, batch), ("d", now - 1800, batch), ("b", now - 100000, other), ("e", now - 90000, other),
+                                         ("a", now - 10 * DAY, "x4"), ("c", now - 20 * DAY, "x5"), ("server", now - 60, "x6"))):
+        con.execute("insert into result values (?, ?, ?, ?, ?, '', '', '')", (on, miner, "h%d" % k, b"", at))
+    con.execute("update batch set state = 'agreed' where hash = ?", (batch,))
+    act = feed(con, now)["activity"]
+    assert act["last"] == now - 1800, act
+    assert (act["miners24"], act["miners7"]) == (2, 4), act
+    assert len(act["days"]) == 14 and act["days"][-1]["day"] == time.strftime("%Y-%m-%d", time.gmtime(now)), act["days"][-1]
+    assert [d["miners"] for d in act["days"]] == [0] * 3 + [1] + [0] * 8 + [2, 2], [d["miners"] for d in act["days"]]
+    # a batch counts when it is agreed, on the day of its last result: the second batch waits, then counts once
+    assert [d["stars"] for d in act["days"]] == [0] * 13 + [6], [d["stars"] for d in act["days"]]
+    con.execute("update batch set state = 'agreed' where hash = ?", (other,))
+    assert [d["stars"] for d in feed(con, now)["activity"]["days"]] == [0] * 12 + [3, 6]
+    print("ok: queue order, retries, skips and activity")
 
 
 if __name__ == "__main__":

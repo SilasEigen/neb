@@ -35,8 +35,10 @@ python batch_server.py watch sky.db --pace 1 --pixel-every 60 --feed /path/to/si
 
 `watch` walks the sectors of the TESS-Gaia light curves in the public MAST bucket, the newest first, and looks for
 new sectors every six hours. `--pace` is the most light curve files it reads per second, `--pixel-every` the
-seconds between two pixel tests, and `--ahead` the most batches that wait for miners before it stops reading.
-`--feed` is the file the science page of the site reads.
+seconds between two pixel tests, `--ahead` the most batches that wait for miners before it stops reading, and `--page`
+the files it reads between two rounds of sorting and writing the feed. `--feed` is the file the science page of the
+site reads. It holds the counts of each step, the signals the pixel test decided, and when miners searched: the last
+search, the miners of the last day and week, and the stars searched each day. It carries no miner address.
 
 A miner can be any of these:
 

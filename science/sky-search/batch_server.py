@@ -1,7 +1,7 @@
 """The batch server of the sky search (spec/sky-search.md).
 
     python batch_server.py serve DB [--port 8787] [--host 127.0.0.1] [--cert PEM --key PEM] [--behind-proxy]
-    python batch_server.py watch DB [--pace 2] [--pixel-every 60] [--ahead 50] [--size 64] [--every 6] [--feed FILE]
+    python batch_server.py watch DB [--pace 2] [--pixel-every 60] [--page 25] [--ahead 50] [--size 64] [--every 6] [--feed FILE]
     python batch_server.py ingest DB --fields 4 [--per 50] [--size 64] [--pace 2]
     python batch_server.py settle DB
     python batch_server.py sift DB
@@ -12,7 +12,7 @@ DB is one SQLite file. Two processes share it: `serve` talks to the miners, `wat
 `watch` lists the sectors of the TESS-Gaia light curves in the public MAST bucket, the newest first, and walks each
 one file by file, at most `pace` files per second (153 KB each). It turns each light curve of a faint star into
 hourly integers (prepare.py) and cuts batches. It stops reading while `ahead` batches wait for miners, and looks for
-new sectors every `every` hours. Between two reads it settles the disputed batches, runs the detection tests on the
+new sectors every `every` hours. After each `page` files it settles the disputed batches, runs the detection tests on the
 agreed ones (sift.py) and rewrites `feed`, the file the page of the site reads. The pixel test downloads about
 10 MB of images per signal, so it runs from a queue, the strongest signal first, one every `pixel-every` seconds.
 `ingest` reads a few random places of one sector instead: for tests.
@@ -59,6 +59,7 @@ create table if not exists signal (batch text, idx integer, gaia text, sector in
 create table if not exists state (key text primary key, value text);
 create index if not exists curve_gaia on curve (gaia, sector);
 create index if not exists refused_miner on refused (miner, at);
+create index if not exists result_at on result (at);
 """
 ARCHIVE = "mast/hlsp/tglc/"
 KNOWN = 3  # light curves of a batch whose entries the server computes before the batch leaves
@@ -173,7 +174,7 @@ def watch(a):
             continue
         sector = todo[0]
         position.setdefault(sector, state("cursor:" + sector))
-        keys = H.listing(sector, after=position[sector], n=100)
+        keys = H.listing(sector, after=position[sector], n=a.page)
         if not keys:
             if rows:
                 cut(con, rows, rng)
@@ -346,6 +347,7 @@ def main():
     p.add_argument("--size", type=int, default=64, help="light curves in a batch")
     p.add_argument("--pace", type=float, default=2.0, help="most files read from the archive per second")
     p.add_argument("--pixel-every", type=float, default=60.0, help="seconds between two pixel tests (about 10 MB each)")
+    p.add_argument("--page", type=int, default=25, help="watch: light curve files read between two rounds of sorting and feed writing")
     p.add_argument("--ahead", type=int, default=50, help="watch: batches that may wait for miners")
     p.add_argument("--every", type=float, default=6.0, help="watch: hours between two looks for new sectors")
     p.add_argument("--feed", help="watch: file to rewrite with what the page of the site shows")

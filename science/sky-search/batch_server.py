@@ -12,8 +12,9 @@ DB is one SQLite file. Two processes share it: `serve` talks to the miners, `wat
 `watch` lists the sectors of the TESS-Gaia light curves in the public MAST bucket, the newest first, and walks each
 one file by file, at most `pace` files per second (153 KB each). It turns each light curve of a faint star into
 hourly integers (prepare.py) and cuts batches. It stops reading while `ahead` batches wait for miners, and looks for
-new sectors every `every` hours. After each `page` files it settles the disputed batches, runs the detection tests on the
-agreed ones (sift.py) and rewrites `feed`, the file the page of the site reads. The pixel test downloads about
+new sectors every `every` hours. After each `page` files it settles the disputed batches and runs the detection tests on
+the agreed ones (sift.py). It rewrites `feed`, the file the page of the site reads, at most once a minute, also between
+two batches it sorts: a line of batches to sort does not keep the page waiting. The pixel test downloads about
 10 MB of images per signal, so it runs from a queue, the strongest signal first, one every `pixel-every` seconds.
 `ingest` reads a few random places of one sector instead: for tests.
 
@@ -153,16 +154,21 @@ def watch(a):
     # `position` is where the reading has got to, `cursor:` in the database where it can start again: the light
     # curves read since the last batch are in memory only, so the cursor moves when a batch is cut
     todo, position, next_look, last_pixel, last_feed = [], {}, 0.0, 0.0, 0.0
-    while True:
-        settle(a, con)
-        sift.detect_new(con)
-        if time.time() - last_pixel >= a.pixel_every and sift.pixels(con, a.pixel_every, 1):
-            last_pixel = time.time()
-        if a.feed and time.time() - last_feed >= 60:  # the file the page of the site reads, replaced in one step
+
+    def write_feed():  # the file the page of the site reads, replaced in one step, at most once a minute
+        nonlocal last_feed
+        if a.feed and time.time() - last_feed >= 60:
             with open(a.feed + ".part", "w") as f:
                 json.dump(sift.feed(con) | {"server": counts(con)}, f, separators=(",", ":"))
             os.replace(a.feed + ".part", a.feed)
             last_feed = time.time()
+
+    while True:
+        write_feed()
+        settle(a, con)
+        sift.detect_new(con, write_feed)  # miners can agree on batches faster than they are sorted: the page must not wait for the last one
+        if time.time() - last_pixel >= a.pixel_every and sift.pixels(con, a.pixel_every, 1):
+            last_pixel = time.time()
         if con.execute("select count(*) from batch where state = 'open'").fetchone()[0] >= a.ahead:
             time.sleep(30)
             continue

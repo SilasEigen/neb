@@ -111,8 +111,9 @@ PENDING = "flipped = 0 and detected = 1 and verdict = '' and mes >= %s and abs(p
 TRIES = 3  # times the cutout of a signal is asked for before the signal is given up
 
 
-def detect_new(con):
-    """the detection tests on every light curve of the agreed batches that were not sifted yet. No network."""
+def detect_new(con, after=None):
+    """the detection tests on every light curve of the agreed batches that were not sifted yet; `after()` is called each
+    time a batch is done, so a long line of batches does not stop the caller from doing its other work. No network."""
     for batch, raw, answer in con.execute("select hash, raw, answer from batch where state = 'agreed' and sifted = 0").fetchall():
         body = con.execute("select raw from result where batch = ? and hash = ? limit 1", (batch, answer)).fetchone()[0]
         curves, rows = S.read_batch(raw), S.read_result(body)[1]
@@ -128,6 +129,8 @@ def detect_new(con):
             con.execute("update batch set sifted = 1 where hash = ?", (batch,))
         con.commit()
         print("batch %s sifted" % batch[:12], flush=True)
+        if after:
+            after()
 
 
 def pixels(con, every=60.0, limit=None):
@@ -176,13 +179,13 @@ DAY = 86400.0
 def activity(con, now=None, days=14):
     """when miners searched, for the page of the site: the time of the last search, the miners of the last 24 hours and of
     the last 7 days, and for each of the last `days` UTC days the miners that sent a result and the stars of the batches
-    agreed that day (the day of the last result of the batch, so the days add up to the stars searched). It carries no
-    miner address."""
+    that two miners agreed on and the server has sorted (counted on the day of the last result of the batch, so the days
+    add up to the stars searched). It carries no miner address."""
     now = time.time() if now is None else float(now)
     start = now - now % DAY - (days - 1) * DAY
     rows = con.execute("select at, miner from result where miner != 'server' and at >= ?", (start,)).fetchall()
     agreed = con.execute("""select max(r.at), (select count(*) from curve c where c.batch = r.batch and c.flipped = 0)
-                            from result r join batch b on b.hash = r.batch where r.miner != 'server' and b.state = 'agreed'
+                            from result r join batch b on b.hash = r.batch where r.miner != 'server' and b.state = 'agreed' and b.sifted = 1
                             group by r.batch having max(r.at) >= ?""", (start,)).fetchall()
     out = [{"day": time.strftime("%Y-%m-%d", time.gmtime(start + i * DAY)), "stars": 0, "who": set()} for i in range(days)]
     for at, miner in rows:
@@ -285,6 +288,7 @@ def compare(hunt, count, engine=""):
 def check():
     """the pixel queue against a stand-in for the pixel test: the strongest signal first, signals that are weak, flipped
     or at one day never asked, a missing cutout asked again up to TRIES times"""
+    import hashlib
     import sqlite3
     import types
 
@@ -324,19 +328,24 @@ def check():
     B.cut(con, [({"gaia": str(10 + i), "tic": str(200 + i), "ra": 20.0 + i, "dec": 5.0, "tmag": 14.0}, rng.integers(-40, 41, 300).astype(np.int8), 0.0, 0, 40, 0.001)
                 for i in range(3)], rng)
     other = con.execute("select hash from batch where hash != ?", (batch,)).fetchone()[0]
+    files = {b: S.run(con.execute("select raw from batch where hash = ?", (b,)).fetchone()[0]) for b in (batch, other)}
     # two miners on the first batch today, two on the second batch yesterday, then results of batches of nothing
     for k, (miner, at, on) in enumerate((("a", now - 3600, batch), ("d", now - 1800, batch), ("b", now - 100000, other), ("e", now - 90000, other),
                                          ("a", now - 10 * DAY, "x4"), ("c", now - 20 * DAY, "x5"), ("server", now - 60, "x6"))):
-        con.execute("insert into result values (?, ?, ?, ?, ?, '', '', '')", (on, miner, "h%d" % k, b"", at))
-    con.execute("update batch set state = 'agreed' where hash = ?", (batch,))
+        body = files.get(on, b"")
+        con.execute("insert into result values (?, ?, ?, ?, ?, '', '', '')", (on, miner, hashlib.sha256(body).hexdigest(), body, at))
+    for b in (batch, other):
+        B.agree(con, b)
     act = feed(con, now)["activity"]
     assert act["last"] == now - 1800, act
     assert (act["miners24"], act["miners7"]) == (2, 4), act
     assert len(act["days"]) == 14 and act["days"][-1]["day"] == time.strftime("%Y-%m-%d", time.gmtime(now)), act["days"][-1]
     assert [d["miners"] for d in act["days"]] == [0] * 3 + [1] + [0] * 8 + [2, 2], [d["miners"] for d in act["days"]]
-    # a batch counts when it is agreed, on the day of its last result: the second batch waits, then counts once
-    assert [d["stars"] for d in act["days"]] == [0] * 13 + [6], [d["stars"] for d in act["days"]]
-    con.execute("update batch set state = 'agreed' where hash = ?", (other,))
+    # a batch counts when two miners agree and the server has sorted it, on the day of its last result: before that it waits
+    assert [d["stars"] for d in act["days"]] == [0] * 14, [d["stars"] for d in act["days"]]
+    done = []
+    detect_new(con, lambda: done.append(1))
+    assert len(done) == 2, done
     assert [d["stars"] for d in feed(con, now)["activity"]["days"]] == [0] * 12 + [3, 6]
     print("ok: queue order, retries, skips and activity")
 
